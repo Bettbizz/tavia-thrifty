@@ -384,29 +384,34 @@ export function createOwner(ctx) {
   }
 
   function viewPush() {
+    const result = O.testResult
+      ? `<p class="${O.testResult.kind === 'ok' ? 'note' : O.testResult.kind === 'bad' ? 'warn' : 'small'}">${esc(O.testResult.text)}</p>` : '';
+    const last = `<p class="small muted">${t('lastReceived')}: ${O.lastPush
+      ? `${new Date(O.lastPush.at).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' })}${O.lastPush.shown ? '' : ' (' + t('notShown') + ': ' + esc(O.lastPush.error) + ')'}`
+      : t('never')} <button class="link small" data-a="o-push-recheck">↻</button></p>`;
+    const test = `<button class="primary small" data-a="o-push-test">🔔 ${t('sendTest')}</button>`;
+    let top;
     switch (O.push) {
-      case 'on': return `<div class="status on">🔔 ${t('pushOnThisPhone')}</div>
-        <div class="two"><button class="primary small" data-a="o-push-test">${t('sendTest')}</button>
-        <button class="btn plain" data-a="o-push-off">${t('turnOff')}</button></div>
-        ${O.testResult ? `<p class="${O.testResult.kind === 'ok' ? 'note' : O.testResult.kind === 'bad' ? 'warn' : 'small'}">${esc(O.testResult.text)}</p>` : ''}
-        <p class="small muted">${t('lastReceived')}: ${O.lastPush
-          ? `${new Date(O.lastPush.at).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' })}${O.lastPush.shown ? '' : ' (' + t('notShown') + ': ' + esc(O.lastPush.error) + ')'}`
-          : t('never')}
-          <button class="link small" data-a="o-push-recheck">↻</button></p>`;
-      case 'blocked': return `<div class="status bad">🔕 ${t('pushBlockedTitle')}</div>
+      case 'on': top = `<div class="status on">🔔 ${t('pushOnThisPhone')}</div>
+        <div class="two">${test}<button class="btn plain" data-a="o-push-off">${t('turnOff')}</button></div>`; break;
+      case 'blocked': top = `<div class="status bad">🔕 ${t('pushBlockedTitle')}</div>
         <p class="small">${t('pushDenied')}</p>
-        <button class="link" data-a="o-push-recheck">↻ ${t('checkAgain')}</button>`;
-      case 'unsupported': return `<div class="status bad">🔕 ${t('pushUnsupported')}</div>
-        <p class="small muted">${t('pushIphone')}</p>`;
-      case 'off': return `<div class="status off">🔕 ${t('pushOffShort')}</div>
+        <div class="two">${test}<button class="btn plain" data-a="o-push-recheck">↻ ${t('checkAgain')}</button></div>`; break;
+      case 'unsupported': top = `<div class="status bad">🔕 ${t('pushUnsupported')}</div>
+        <p class="small muted">${t('pushIphone')}</p>${test}`; break;
+      case 'off': top = `<div class="status off">🔕 ${t('pushOffShort')}</div>
         <p class="small">${t('pushOff')}</p><p class="small muted">${t('pushIphone')}</p>
-        <button class="primary small" data-a="o-push-on">🔔 ${t('turnOn')}</button>`;
-      default: return `<p class="small muted">${t('loading')}</p>`;
+        <div class="two"><button class="primary small" data-a="o-push-on">🔔 ${t('turnOn')}</button>
+        <button class="btn plain okc" data-a="o-push-test">${t('sendTest')}</button></div>`; break;
+      default: top = `<p class="small muted">${t('loading')}</p>${test}`;
     }
+    return top + result + last;
   }
 
   // Sends a test to this owner's own phones and explains any failure in plain words.
   async function sendTest() {
+    // Not registered on this phone yet (or the phone dropped it): register first.
+    if (O.push === 'off') { await enablePush(); if (O.push !== 'on') return; }
     O.testResult = { kind: 'busy', text: t('loading') }; render();
     const { data, error } = await sb.functions.invoke('notify-owners', { body: { test: true } });
     let r;

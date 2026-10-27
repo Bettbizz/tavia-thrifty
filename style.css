@@ -192,3 +192,4 @@ summary { color: var(--brand); font-weight: 600; padding: 6px 0; cursor: pointer
 .status.off { background: #f1ece8; color: var(--muted); }
 .status.bad { background: #fde7e5; color: var(--bad); }
 .btn.plain { background: var(--card); color: var(--bad); border: 2px solid var(--line); }
+.btn.plain.okc { color: var(--brand); }
