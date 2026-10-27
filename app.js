@@ -2,6 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
+import { createOwner } from './owner.js';
 
 const app = document.getElementById('app');
 
@@ -38,7 +39,12 @@ const S = {
   busy: false,
   loginEmail: '',
   loginError: '',
+  notice: '',
+  signup: false,
+  approvals: null,                     // owner: price approvals waiting
+  pendingReq: store.get('pendingReq', null), // employee: waiting for owner approval
 };
+if (S.pendingReq) S.screen = 'waiting';
 
 const me = () => (S.profile && S.session && S.profile.id === S.session.user.id ? S.profile : null);
 const isOwner = () => me()?.role === 'owner';
@@ -96,7 +102,7 @@ function nairobiDayStart() {
 async function loadToday() {
   if (!online() || !S.session) return;
   const { data, error } = await sb.from('sales')
-    .select('id, sold_at, total, payment_method, mpesa_code, status, sold_by, ' +
+    .select('id, sold_at, total, payment_method, mpesa_code, status, sold_by, approved_by, ' +
             'seller:profiles!sales_sold_by_fkey(full_name), sale_lines(quantity, unit_price, grade_id)')
     .gte('sold_at', nairobiDayStart().toISOString())
     .order('sold_at', { ascending: false });
@@ -134,8 +140,12 @@ async function sync() {
 // ---------- actions ----------
 function toast(msg, bad = false) {
   S.toast = msg; S.toastBad = bad;
+  const id = (S.toastId = (S.toastId || 0) + 1);
   render();
-  setTimeout(() => { S.toast = null; document.querySelector('.toast')?.remove(); }, 1600);
+  setTimeout(() => {
+    if (S.toastId !== id) return;          // a newer message is showing
+    S.toast = null; document.querySelector('.toast')?.remove();
+  }, bad ? 3000 : 1600);
 }
 
 function addGrade(id) {
@@ -175,6 +185,54 @@ function completeSale() {
   sync();
 }
 
+async function askOwner() {
+  if (!online()) return toast(t('needsInternetAsk'), true);
+  let code = null;
+  if (S.pay === 'mpesa') {
+    code = S.mpesa.trim().toUpperCase();
+    if (!/^[A-Z0-9]{8,12}$/.test(code)) return toast(t('mpesaCodeMissing'), true);
+  }
+  const req = {
+    id: crypto.randomUUID(), payment_method: S.pay, mpesa_code: code,
+    lines: S.cart.map((l) => ({ grade_id: l.grade_id, quantity: l.quantity, unit_price: l.unit_price })),
+    total: cartTotal(), user_id: S.session.user.id, sold_at: new Date().toISOString(),
+  };
+  S.busy = true; render();
+  const { error } = await sb.rpc('request_approval', {
+    p_id: req.id, p_payment_method: req.payment_method, p_mpesa_code: req.mpesa_code, p_lines: req.lines });
+  S.busy = false;
+  if (error) { toast(isNetErr(error) ? t('needsInternetAsk') : error.message, true); return render(); }
+  S.pendingReq = req; store.set('pendingReq', req);
+  S.screen = 'waiting'; render();
+}
+
+async function checkRequest() {
+  const req = S.pendingReq;
+  if (!req || !online() || !S.session) return;
+  const { data, error } = await sb.from('price_requests').select('status').eq('id', req.id).single();
+  if (error || !data || data.status === 'pending') return;
+  S.pendingReq = null; store.set('pendingReq', null);
+  if (data.status === 'approved') {
+    S.lastSale = req; S.cart = []; S.mpesa = ''; S.pay = 'cash'; S.screen = 'done';
+    if (S.tab === 'today') await loadToday();
+  } else {
+    S.cart = req.lines.map((l) => ({ ...l })); S.screen = 'cart';
+    if (data.status === 'rejected') toast(t('ownerRejected'), true);
+  }
+  render();
+}
+
+async function cancelRequest() {
+  const req = S.pendingReq;
+  if (!req) return;
+  if (online()) await sb.rpc('cancel_request', { p_id: req.id });
+  await checkRequest();
+  if (S.pendingReq) {          // offline or not yet cancelled: go back to the cart anyway
+    S.cart = req.lines.map((l) => ({ ...l })); S.pendingReq = null; store.set('pendingReq', null);
+    S.screen = 'cart'; render();
+  }
+}
+
 async function voidSale(id) {
   const reason = prompt(t('voidReason'));
   if (!reason) return;
@@ -200,10 +258,12 @@ function render() {
   if (!p) { app.innerHTML = shell(`<p class="center">${online() ? t('loading') : t('offline')}</p>`); return; }
   if (!p.active) {
     app.innerHTML = shell(`<p class="center">${t('accountInactive')}</p>
-      <button class="link" data-a="logout">${t('logout')}</button>`);
+      <button class="primary" data-a="recheck">${t('checkAgain')}</button>
+      <button class="link logout" data-a="logout">${t('logout')}</button>`);
     return;
   }
-  app.innerHTML = shell(S.tab === 'sell' ? renderSell() : renderToday());
+  if (S.tab === 'owner' && p.role !== 'owner') S.tab = 'sell';
+  app.innerHTML = shell(S.tab === 'sell' ? renderSell() : S.tab === 'owner' ? owner.view() : renderToday());
 }
 
 function shell(body) {
@@ -211,17 +271,21 @@ function shell(body) {
   const banner = !online()
     ? `<div class="banner off">${t('offline')}</div>`
     : waiting ? `<div class="banner wait">${waiting} · ${t('pending')}</div>` : '';
+  const asks = isOwner() ? (S.approvals || []).length : 0;
+  const askBanner = asks && !(S.tab === 'owner' && S.o.section === 'approvals')
+    ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
   return `
     <header class="top">
       <div class="brand">Thrifty</div>
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
     </header>
-    ${banner}
+    ${askBanner}${banner}
     <main>${body}</main>
-    <nav class="tabs">
+    <nav class="tabs ${isOwner() ? 'three' : ''}">
       <button data-a="tab" data-v="sell" class="${S.tab === 'sell' ? 'on' : ''}"><span class="ic">🛍️</span>${t('sell')}</button>
       <button data-a="tab" data-v="today" class="${S.tab === 'today' ? 'on' : ''}"><span class="ic">📋</span>${t('today')}</button>
+      ${isOwner() ? `<button data-a="tab" data-v="owner" class="${S.tab === 'owner' ? 'on' : ''}"><span class="ic">⭐</span>${t('owner')}${asks ? ` <span class="count">${asks}</span>` : ''}</button>` : ''}
     </nav>
     ${S.toast ? `<div class="toast${S.toastBad ? ' bad' : ''}">${esc(S.toast)}</div>` : ''}`;
 }
@@ -231,12 +295,21 @@ function renderLogin() {
     <div class="login">
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
       <div class="brand big">Thrifty</div>
-      <form id="login">
+      ${S.notice ? `<p class="note">${esc(S.notice)}</p>` : ''}
+      ${S.signup ? `<form id="signup">
+        <label>${t('yourName')}<input name="name" autocomplete="name" required></label>
+        <label>${t('email')}<input name="email" type="email" autocomplete="username" required value="${esc(S.loginEmail)}"></label>
+        <label>${t('password')} <small>(${t('passwordHint')})</small><input name="password" type="password" minlength="6" autocomplete="new-password" required></label>
+        ${S.loginError ? `<p class="err">${esc(S.loginError)}</p>` : ''}
+        <button class="primary" ${S.busy ? 'disabled' : ''}>${S.busy ? t('loading') : t('createAccount')}</button>
+        <button type="button" class="link" data-a="signup" data-v="0">${t('haveAccount')}</button>
+      </form>` : `<form id="login">
         <label>${t('email')}<input name="email" type="email" autocomplete="username" required value="${esc(S.loginEmail)}"></label>
         <label>${t('password')}<input name="password" type="password" autocomplete="current-password" required></label>
         ${S.loginError ? `<p class="err">${esc(S.loginError)}</p>` : ''}
         <button class="primary" ${S.busy ? 'disabled' : ''}>${S.busy ? t('loading') : t('login')}</button>
-      </form>
+        <button type="button" class="link" data-a="signup" data-v="1">${t('newStaff')}</button>
+      </form>`}
     </div>`;
 }
 
@@ -247,6 +320,7 @@ function cartBar() {
 }
 
 function renderSell() {
+  if (S.screen === 'waiting' && S.pendingReq) return renderWaiting();
   if (S.screen === 'done') return renderDone();
   if (S.screen === 'cart') return renderCart();
   if (S.screen === 'grades') return renderGrades();
@@ -312,7 +386,23 @@ function renderCart() {
       <input data-a="mpesa" autocapitalize="characters" autocomplete="off" spellcheck="false"
         placeholder="${t('mpesaCodeHint')}" value="${esc(S.mpesa)}"></label>` : ''}
     <div class="total"><span>${t('total')}</span><b>${kes(cartTotal())}</b></div>
-    <button class="primary" data-a="complete" ${blocked ? 'disabled' : ''}>${t('complete')}</button>`;
+    ${blocked
+      ? `<button class="primary askbtn" data-a="ask" ${S.busy ? 'disabled' : ''}>🔔 ${t('askOwnerBtn')}</button>`
+      : `<button class="primary" data-a="complete">${t('complete')}</button>`}`;
+}
+
+function renderWaiting() {
+  const r = S.pendingReq;
+  return `<div class="done">
+    <div class="tick waitt">⏳</div>
+    <h1>${t('waitingOwner')}</h1>
+    <div class="receipt">
+      ${r.lines.map((l) => `<div><span>${l.quantity} × ${esc(gradeLabel(grade(l.grade_id)))}</span>
+        <span>${kes(l.quantity * l.unit_price)}</span></div>`).join('')}
+      <div class="rtotal"><span>${t('total')}</span><b>${kes(r.total)}</b></div>
+    </div>
+    <button class="link danger" data-a="cancelreq">${t('cancel')}</button>
+  </div>`;
 }
 
 function renderDone() {
@@ -358,7 +448,8 @@ function renderToday() {
     <div class="sitems">${items(s.sale_lines)}</div>
     <div class="srow small">
       <span>${s.payment_method === 'mpesa' ? `M-Pesa ${esc(s.mpesa_code)}` : t('cash')}
-        ${s.status === 'voided' ? ` · <b>${t('voided')}</b>` : ''}</span>
+        ${s.status === 'voided' ? ` · <b>${t('voided')}</b>` : ''}
+        ${s.approved_by ? ` · ✓ ${t('approvedPrice')}` : ''}</span>
       ${isOwner() && s.status === 'completed' ? `<button class="link danger" data-a="void" data-v="${s.id}">${t('void')}</button>` : ''}
     </div>
   </div>`).join('');
@@ -389,6 +480,7 @@ app.addEventListener('click', async (e) => {
       if (v === 'sell' && S.screen === 'done') S.screen = 'categories';
       render();
       if (v === 'today') { await loadToday(); render(); }
+      if (v === 'owner') owner.go(S.o.section);
       break;
     case 'cat': S.categoryId = v; S.screen = 'grades'; render(); break;
     case 'screen': S.screen = v; render(); break;
@@ -403,6 +495,11 @@ app.addEventListener('click', async (e) => {
     case 'retry': { const s = S.queue.find((x) => x.id === v); if (s) { delete s.error; saveQueue(); sync(); } break; }
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
+    case 'ask': await askOwner(); break;
+    case 'cancelreq': await cancelRequest(); break;
+    case 'recheck': await loadProfile(); render(); break;
+    case 'signup': S.signup = v === '1'; S.loginError = ''; S.notice = ''; render(); break;
+    default: await owner.onClick(a, v);
   }
 });
 
@@ -419,6 +516,8 @@ app.addEventListener('input', (e) => {
 });
 
 app.addEventListener('submit', async (e) => {
+  if (e.target.dataset.form) { e.preventDefault(); return owner.onSubmit(e.target); }
+  if (e.target.id === 'signup') { e.preventDefault(); return signup(e.target); }
   if (e.target.id !== 'login') return;
   e.preventDefault();
   const f = new FormData(e.target);
@@ -430,9 +529,27 @@ app.addEventListener('submit', async (e) => {
   if (error) { S.loginError = t('loginFailed'); render(); }
 });
 
+async function signup(form) {
+  const f = new FormData(form);
+  S.loginEmail = String(f.get('email') || '').trim();
+  if (!online()) { S.loginError = t('needInternetLogin'); return render(); }
+  S.busy = true; S.loginError = ''; render();
+  const { data, error } = await sb.auth.signUp({
+    email: S.loginEmail, password: String(f.get('password') || ''),
+    options: { data: { full_name: String(f.get('name') || '').trim() } },
+  });
+  S.busy = false;
+  if (error) S.loginError = `${t('signupFailed')}: ${error.message}`;
+  else if (!data.session) { S.signup = false; S.notice = t('accountCreated'); }
+  render();
+}
+
 window.addEventListener('online', () => { render(); loadCatalog(); sync(); });
 window.addEventListener('offline', render);
 setInterval(sync, 30000);
+setInterval(() => { owner.pollApprovals(); checkRequest(); }, 6000);
+
+const owner = createOwner({ S, sb, t, esc, kes, render, toast, loadCatalog, loadProfile, priceInfo });
 
 // ---------- start ----------
 function start() {
@@ -447,7 +564,7 @@ function start() {
       if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
         await Promise.all([loadProfile(), loadCatalog()]);
         render();
-        sync();
+        sync(); owner.pollApprovals(); checkRequest();
       }
     }, 0);
   });

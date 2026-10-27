@@ -10,6 +10,8 @@ cuts, and is in English and Kiswahili.
 |---|---|
 | `schema.sql` | Database tables and rules. Already run in Supabase. |
 | `seed.sql` | Starting price list (categories, grades, prices). Run once. |
+| `migrations/` | Database updates, run in order once each. |
+| `owner.js` | The Owner tab. |
 | `config.js` | Your Supabase address and publishable key. |
 | `index.html`, `app.js`, `i18n.js`, `style.css` | The app itself. |
 | `sw.js`, `manifest.webmanifest`, `icon-*.png` | Make it installable and work offline. |
@@ -24,12 +26,17 @@ cuts, and is in English and Kiswahili.
    Supabase → Project Settings → API. Never paste the secret / service_role key.
 3. **Set names.** In SQL Editor, give yourself a display name:
    `update profiles set full_name = 'Your Name' where id = (select id from auth.users where email = 'YOUR EMAIL');`
-4. **Add your employee.** Authentication → Users → Add user → Create new user.
-   Use their email (or a made-up one such as `mary@thrifty.shop`), a password,
-   tick Auto Confirm User. Then set their name with the same SQL as step 3.
-   New users are employees automatically.
+4. **Run the owner update.** SQL Editor → New query → paste all of
+   `migrations/002_owner.sql` → Run (once).
+5. **Add staff.** The new person opens the app and taps
+   **New staff? Create account**. You then open **Owner → Staff**, tick
+   **Can use the app**, choose Employee or Owner, and Save.
+   (You can still add users in Supabase → Authentication → Add user; they
+   also appear in Owner → Staff waiting for approval.)
+   If staff use made-up emails, turn off email confirmation in Supabase
+   (Authentication → Sign In / Providers → Email → Confirm email).
 
-## Put it online (Cloudflare Pages, free)
+## Put it online (Cloudflare, free)
 
 1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Pages** →
    **Upload assets** (drag and drop).
@@ -47,15 +54,22 @@ without internet; they send automatically when it returns.
 
 ## Updating the app later
 
-Change the version in `sw.js` (`thrifty-v1` → `thrifty-v2`), then upload the
-folder again in Cloudflare (Create new deployment). Phones pick up the new
-version the next time the app is opened with internet.
+The app is connected to GitHub (`Bettbizz/tavia-thrifty`); every change pushed
+to `main` goes live automatically. Bump the version in `sw.js`
+(`thrifty-v2` → `thrifty-v3`) with each release so phones refresh their copy.
+Phones pick up the new version the next time the app is opened with internet
+(sometimes it needs to be closed and opened twice).
 
 ## Who can do what
 
 Enforced by the database, not just hidden in the app:
 
-- **Employee:** record sales within the allowed price range, see own sales today.
-- **Owner:** everything, including selling below the lowest price (flagged),
-  voiding sales, seeing all staff's sales. Bales, promotions, profit reports,
-  price editing and the cash count are coming in the next version.
+- **Employee:** record sales within the allowed price range, see own sales
+  today. Below the lowest price they tap **Ask owner to approve**; the sale is
+  saved as theirs once an owner approves it.
+- **Owner (one or more):** everything — approve prices, reports and profit,
+  bales and stock, prices, promotions, cash count, staff and roles, voiding.
+  The app never allows the last active owner to be removed.
+
+Owners see approval requests while the app is open (it checks every few
+seconds).
