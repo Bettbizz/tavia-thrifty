@@ -350,6 +350,10 @@ export function createOwner(ctx) {
     return error;
   }
   async function pushStatus() {
+    try {
+      const r = await (await caches.open('bizzfy-pushlog')).match('./__pushlog');
+      O.lastPush = r ? await r.json() : null;
+    } catch { O.lastPush = null; }
     if (!pushSupported()) { O.push = 'unsupported'; return; }
     if (Notification.permission === 'denied') { O.push = 'blocked'; return; }
     const reg = await navigator.serviceWorker.getRegistration();
@@ -384,7 +388,11 @@ export function createOwner(ctx) {
       case 'on': return `<div class="status on">🔔 ${t('pushOnThisPhone')}</div>
         <div class="two"><button class="primary small" data-a="o-push-test">${t('sendTest')}</button>
         <button class="btn plain" data-a="o-push-off">${t('turnOff')}</button></div>
-        ${O.testResult ? `<p class="${O.testResult.kind === 'ok' ? 'note' : O.testResult.kind === 'bad' ? 'warn' : 'small'}">${esc(O.testResult.text)}</p>` : ''}`;
+        ${O.testResult ? `<p class="${O.testResult.kind === 'ok' ? 'note' : O.testResult.kind === 'bad' ? 'warn' : 'small'}">${esc(O.testResult.text)}</p>` : ''}
+        <p class="small muted">${t('lastReceived')}: ${O.lastPush
+          ? `${new Date(O.lastPush.at).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' })}${O.lastPush.shown ? '' : ' (' + t('notShown') + ': ' + esc(O.lastPush.error) + ')'}`
+          : t('never')}
+          <button class="link small" data-a="o-push-recheck">↻</button></p>`;
       case 'blocked': return `<div class="status bad">🔕 ${t('pushBlockedTitle')}</div>
         <p class="small">${t('pushDenied')}</p>
         <button class="link" data-a="o-push-recheck">↻ ${t('checkAgain')}</button>`;

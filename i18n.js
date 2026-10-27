@@ -157,6 +157,9 @@ const dict = {
     diagNoPhone: 'This phone was not registered. It has been registered again; tap Send test once more.',
     diagRefused: 'The phone service refused the notification:',
     diagSent: 'Sent! If nothing appears within a minute: on iPhone open Settings → Notifications → Bizzfy POS and allow notifications, and turn off Focus / Do Not Disturb.',
+    lastReceived: 'Last notification received by this phone',
+    never: 'never',
+    notShown: 'could not be shown',
   },
   sw: {
     sell: 'Uza', today: 'Leo', owner: 'Mwenye duka',
@@ -315,6 +318,9 @@ const dict = {
     diagNoPhone: 'Simu hii haikuwa imesajiliwa. Imesajiliwa upya; bonyeza Tuma jaribio tena.',
     diagRefused: 'Huduma ya simu ilikataa arifa:',
     diagSent: 'Imetumwa! Kama hakuna kitu ndani ya dakika moja: kwenye iPhone fungua Settings → Notifications → Bizzfy POS uruhusu arifa, na uzime Focus / Do Not Disturb.',
+    lastReceived: 'Arifa ya mwisho iliyopokelewa na simu hii',
+    never: 'bado',
+    notShown: 'haikuweza kuonyeshwa',
   },
 };
 
