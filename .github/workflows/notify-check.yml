@@ -1,0 +1,55 @@
+# Bizzfy POS — notification check. Run by hand (Actions → Notification check →
+# Run workflow). Lists the phones registered for notifications and sends each
+# owner phone a test, reporting what Apple/Google answered. Shows no secrets.
+name: Notification check
+
+on:
+  workflow_dispatch:
+
+env:
+  APP_URL: https://tavia-thrifty.brianbeth8851-b1e.workers.dev
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read registered phones and recent approval requests
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -eo pipefail
+          command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          psql "$DB_URL" -tA -c "select coalesce(json_agg(json_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth, 'name', p.full_name, 'role', p.role, 'active', p.active, 'created', s.created_at)), '[]') from push_subscriptions s join profiles p on p.id = s.user_id" > subs.json
+          psql "$DB_URL" -tA -F ' | ' -c "select 'owners active: ' || count(*) from profiles where role='owner' and active" | sed 's/^/::notice::/'
+          psql "$DB_URL" -tA -F ' | ' -c "select to_char(requested_at at time zone 'Africa/Nairobi','DD Mon HH24:MI'), status, total from price_requests order by requested_at desc limit 5" | sed 's/^/::notice::recent request: /'
+      - name: Send a test notification to each owner phone
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+        run: |
+          set -eo pipefail
+          npm i --silent --no-save web-push@3.6.7
+          export VAPID_PUBLIC_KEY=$(sed -n "s/^export const VAPID_PUBLIC_KEY = '\(.*\)';/\1/p" config.js)
+          node - <<'EOF'
+          const webpush = require('web-push');
+          const subs = JSON.parse(require('fs').readFileSync('subs.json', 'utf8').trim() || '[]');
+          const note = (m) => console.log('::notice::' + m.replace(/\n/g, ' '));
+          note(`registered phones: ${subs.length}`);
+          const priv = (process.env.VAPID_PRIVATE_KEY || '').trim();
+          note(`private key length ${priv.length} (should be 43), public key length ${process.env.VAPID_PUBLIC_KEY.length} (should be 87)`);
+          (async () => {
+            try { webpush.setVapidDetails(process.env.APP_URL, process.env.VAPID_PUBLIC_KEY, priv); }
+            catch (e) { note('KEY PROBLEM: ' + e.message); return; }
+            for (const s of subs) {
+              const who = `${s.name} (${s.role}${s.active ? '' : ', inactive'}) via ${new URL(s.endpoint).host}, registered ${s.created}`;
+              try {
+                const r = await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+                  JSON.stringify({ title: 'Bizzfy POS check', body: 'Test from GitHub ' + new Date().toISOString().slice(11, 16) + ' UTC', url: './', tag: 'check' }),
+                  { TTL: 600, urgency: 'high' });
+                note(`OK ${r.statusCode} → ${who}`);
+              } catch (e) {
+                note(`FAILED ${e.statusCode || ''} ${String(e.body || e.message).slice(0, 200)} → ${who}`);
+              }
+            }
+          })();
+          EOF
