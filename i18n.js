@@ -150,6 +150,13 @@ const dict = {
     sendTest: 'Send test',
     testSent: 'Test sent. It should arrive in a few seconds.',
     testFailed: 'Test could not be sent. Check that the GitHub setup (3 secrets) is finished.',
+    diagNoFunction: 'The notification sender is not set up on Supabase yet. Finish the GitHub setup: add the 3 secrets, then Actions → Deploy to Supabase → Run workflow, and wait until it is green.',
+    diagNoKeys: 'The notification keys are missing on Supabase. Check the VAPID_PRIVATE_KEY secret in GitHub, then run the workflow again.',
+    diagLogin: 'Your login has expired. Log out and log in again, then try.',
+    diagServer: 'The notification sender had an error',
+    diagNoPhone: 'This phone was not registered. It has been registered again; tap Send test once more.',
+    diagRefused: 'The phone service refused the notification:',
+    diagSent: 'Sent! If nothing appears within a minute: on iPhone open Settings → Notifications → Bizzfy POS and allow notifications, and turn off Focus / Do Not Disturb.',
   },
   sw: {
     sell: 'Uza', today: 'Leo', owner: 'Mwenye duka',
@@ -301,6 +308,13 @@ const dict = {
     sendTest: 'Tuma jaribio',
     testSent: 'Jaribio limetumwa. Litafika baada ya sekunde chache.',
     testFailed: 'Jaribio halikutumwa. Hakikisha usanidi wa GitHub (siri 3) umekamilika.',
+    diagNoFunction: 'Kituma arifa bado hakijawekwa kwenye Supabase. Maliza usanidi wa GitHub: weka siri 3, kisha Actions → Deploy to Supabase → Run workflow, na usubiri iwe kijani.',
+    diagNoKeys: 'Funguo za arifa hazipo kwenye Supabase. Angalia siri ya VAPID_PRIVATE_KEY kwenye GitHub, kisha endesha workflow tena.',
+    diagLogin: 'Muda wa kuingia umeisha. Toka na uingie tena, kisha ujaribu.',
+    diagServer: 'Kituma arifa kimepata tatizo',
+    diagNoPhone: 'Simu hii haikuwa imesajiliwa. Imesajiliwa upya; bonyeza Tuma jaribio tena.',
+    diagRefused: 'Huduma ya simu ilikataa arifa:',
+    diagSent: 'Imetumwa! Kama hakuna kitu ndani ya dakika moja: kwenye iPhone fungua Settings → Notifications → Bizzfy POS uruhusu arifa, na uzime Focus / Do Not Disturb.',
   },
 };
 

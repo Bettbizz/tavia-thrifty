@@ -383,7 +383,8 @@ export function createOwner(ctx) {
     switch (O.push) {
       case 'on': return `<div class="status on">🔔 ${t('pushOnThisPhone')}</div>
         <div class="two"><button class="primary small" data-a="o-push-test">${t('sendTest')}</button>
-        <button class="btn plain" data-a="o-push-off">${t('turnOff')}</button></div>`;
+        <button class="btn plain" data-a="o-push-off">${t('turnOff')}</button></div>
+        ${O.testResult ? `<p class="${O.testResult.kind === 'ok' ? 'note' : O.testResult.kind === 'bad' ? 'warn' : 'small'}">${esc(O.testResult.text)}</p>` : ''}`;
       case 'blocked': return `<div class="status bad">🔕 ${t('pushBlockedTitle')}</div>
         <p class="small">${t('pushDenied')}</p>
         <button class="link" data-a="o-push-recheck">↻ ${t('checkAgain')}</button>`;
@@ -396,10 +397,29 @@ export function createOwner(ctx) {
     }
   }
 
+  // Sends a test to this owner's own phones and explains any failure in plain words.
   async function sendTest() {
+    O.testResult = { kind: 'busy', text: t('loading') }; render();
     const { data, error } = await sb.functions.invoke('notify-owners', { body: { test: true } });
-    if (error || !data?.sent) return toast(t('testFailed'), true);
-    toast(t('testSent'));
+    let r;
+    if (error) {
+      const status = error.context?.status;
+      let detail = '';
+      try { detail = (await error.context.json())?.error || ''; } catch { /* no body */ }
+      if (status === 404) r = { kind: 'bad', text: t('diagNoFunction') };
+      else if (status === 401) r = { kind: 'bad', text: t('diagLogin') };
+      else if (/VAPID/i.test(detail)) r = { kind: 'bad', text: t('diagNoKeys') };
+      else if (!status) r = { kind: 'bad', text: t('diagNoFunction') + ' (' + (error.message || 'network') + ')' };
+      else r = { kind: 'bad', text: `${t('diagServer')} ${status}: ${detail || error.message}` };
+    } else if (!data?.phones) {
+      await pushStatus();
+      r = { kind: 'bad', text: t('diagNoPhone') };
+    } else if (!data.sent) {
+      r = { kind: 'bad', text: `${t('diagRefused')} ${(data.failed || []).join(' | ')}` };
+    } else {
+      r = { kind: 'ok', text: t('diagSent') };
+    }
+    O.testResult = r; render();
   }
 
   function viewSettings() {

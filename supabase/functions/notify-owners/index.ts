@@ -25,18 +25,22 @@ function adminKey(): string {
 
 type Sub = { endpoint: string; p256dh: string; auth: string };
 // deno-lint-ignore no-explicit-any
-async function sendAll(admin: any, subs: Sub[], payload: string): Promise<number> {
+async function sendAll(admin: any, subs: Sub[], payload: string) {
   let sent = 0;
+  const failed: string[] = [];
   await Promise.all(subs.map(async (s) => {
     try {
-      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 600 });
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload,
+        { TTL: 600, urgency: 'high' });
       sent++;
     } catch (e) {
+      const host = new URL(s.endpoint).host;
+      failed.push(`${host} ${e?.statusCode ?? ''} ${String(e?.body ?? e?.message ?? e).slice(0, 120)}`.trim());
       // Phone unsubscribed or app removed: forget it.
       if (e?.statusCode === 404 || e?.statusCode === 410) await admin.from('push_subscriptions').delete().eq('endpoint', s.endpoint);
     }
   }));
-  return sent;
+  return { sent, phones: subs.length, failed };
 }
 
 Deno.serve(async (req) => {
@@ -50,6 +54,9 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: 'not logged in' }, 401);
 
     const body = await req.json();
+    if (!Deno.env.get('VAPID_PUBLIC_KEY') || !Deno.env.get('VAPID_PRIVATE_KEY')) {
+      return json({ error: 'VAPID keys are missing in Supabase secrets' }, 500);
+    }
     webpush.setVapidDetails(
       Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@example.com',
       Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!);
@@ -57,8 +64,8 @@ Deno.serve(async (req) => {
     // "Send test notification" from Owner → Settings: only to the caller's own phones.
     if (body.test) {
       const { data: mine } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth').eq('user_id', user.id);
-      return json({ sent: await sendAll(admin, mine ?? [], JSON.stringify({
-        title: 'Bizzfy POS', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })) });
+      return json(await sendAll(admin, mine ?? [], JSON.stringify({
+        title: 'Bizzfy POS', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })));
     }
 
     const request_id = body.request_id;
@@ -72,7 +79,7 @@ Deno.serve(async (req) => {
       admin.from('profiles').select('id').eq('role', 'owner').eq('active', true),
     ]);
     const ownerIds = (owners ?? []).map((o) => o.id);
-    if (!ownerIds.length) return json({ sent: 0 });
+    if (!ownerIds.length) return json({ sent: 0, phones: 0, failed: [] });
     const { data: subs } = await admin.from('push_subscriptions')
       .select('endpoint, p256dh, auth').in('user_id', ownerIds);
 
@@ -83,7 +90,7 @@ Deno.serve(async (req) => {
       tag: 'approval-' + r.id,
     });
 
-    return json({ sent: await sendAll(admin, subs ?? [], payload) });
+    return json(await sendAll(admin, subs ?? [], payload));
   } catch (e) {
     return json({ error: String(e?.message ?? e) }, 500);
   }
