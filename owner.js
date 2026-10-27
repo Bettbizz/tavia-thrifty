@@ -51,7 +51,57 @@ export function createOwner(ctx) {
     const { data, error } = await sb.rpc('decide_request', { p_id: id, p_approve: approve });
     if (error) return fail(error);
     S.approvals = (S.approvals || []).filter((r) => r.id !== id);
+    if (data === 'approved') { stockCheck(); loadStock(); }
     toast(data === 'approved' ? t('approve') + ' ✓' : t('reject'), data !== 'approved');
+  }
+
+  // ---------------- stock monitor ----------------
+  async function loadStock() {
+    if (!navigator.onLine || S.profile?.role !== 'owner') return;
+    const { data, error } = await sb.rpc('stock_status');
+    if (!error && data) { S.stock = data; render(); }
+  }
+  // Ask the server to alert owners if stock just dropped below the level (once per drop).
+  const stockCheck = () => sb.functions.invoke('notify-owners', { body: { stock_check: true } }).catch(() => {});
+  const isLow = (st) => st && st.has_bales && st.threshold > 0 && st.total < st.threshold;
+  const fill = (key, v) => t(key).replace(/\{(\w+)\}/g, (_, k) => v[k] ?? '');
+
+  function suggestions(st) {
+    const rate = st.sold14 / 14;                       // pieces sold per day, last 2 weeks
+    const need = Math.max(0, st.threshold - st.total);  // to get back to the alert level
+    const twoWeeks = Math.ceil(rate * 14);
+    const buy = Math.max(need, twoWeeks - st.total, 0);
+    const out = [];
+    if (buy > 0) {
+      const rounded = Math.ceil(buy / 10) * 10;
+      out.push(rate > 0 ? fill('sugBuyPace', { n: rounded, level: st.threshold })
+                        : fill('sugBuyLevel', { n: rounded, level: st.threshold }));
+    }
+    const fast = st.items.filter((i) => i.sold14 > 0 && i.remaining < Math.ceil(i.sold14 / 2)).slice(0, 3);
+    if (fast.length) out.push(t('sugFast') + ' ' + fast.map((i) =>
+      fill('sugFastItem', { item: i.item, sold: i.sold14, left: i.remaining })).join('; ') + '.');
+    const slow = st.items.filter((i) => i.remaining >= 5 && i.sold30 === 0).slice(0, 3);
+    if (slow.length) out.push(t('sugSlow') + ' ' + slow.map((i) =>
+      fill('sugSlowItem', { item: i.item, left: i.remaining })).join('; ') + '. ' + t('sugSlowAction'));
+    out.push(t('sugFirm'));
+    out.push(fill('sugLevel', { level: st.threshold }));
+    return out;
+  }
+
+  function stockCard(st, afterRestock) {
+    if (!st) return '';
+    if (!st.has_bales) return `<div class="card"><h2>📦 ${t('stockMonitor')}</h2><p class="small">${t('stockNoBales')}</p></div>`;
+    const low = isLow(st);
+    const rate = st.sold14 / 14;
+    const days = rate > 0 ? Math.floor(st.total / rate) : null;
+    return `<div class="card ${low ? 'lowcard' : ''}">
+      <h2>📦 ${t('stockMonitor')}</h2>
+      <div class="srow"><span>${t('piecesInStock')}</span><b class="${low ? 'neg' : 'pos'}">${st.total}</b></div>
+      <div class="srow small"><span>${t('alertLevel')}</span><span>${st.threshold}</span></div>
+      ${rate > 0 ? `<div class="srow small"><span>${t('pace')}</span><span>${fill('paceValue', { rate: rate.toFixed(1), days })}</span></div>` : ''}
+      ${low ? `<div class="warn">⚠ ${afterRestock ? fill('stillLow', { level: st.threshold }) : fill('lowNow', { n: st.total, level: st.threshold })}</div>
+        <h2>${t('whatToDo')}</h2><ol class="sug">${suggestions(st).map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+    </div>`;
   }
 
   // ---------------- loading per section ----------------
@@ -79,7 +129,8 @@ export function createOwner(ctx) {
             sb.from('bale_stock').select('grade_id, remaining').gt('remaining', 0),
           ]);
           if (b.error) throw b.error;
-          O.bales = b.data; O.stock = s.data || []; break;
+          O.bales = b.data; O.stock = s.data || [];
+          await loadStock(); break;
         }
         case 'prices': {
           const [c, g] = await Promise.all([
@@ -103,7 +154,7 @@ export function createOwner(ctx) {
           if (c.error) throw c.error;
           O.counts = c.data; O.cashToday = r.data?.cash ?? 0; break;
         }
-        case 'settings': await pushStatus(); break;
+        case 'settings': await Promise.all([pushStatus(), loadStock()]); break;
         case 'staff': {
           const { data, error } = await sb.from('profiles').select('id, full_name, email, role, active')
             .order('active').order('full_name');
@@ -115,7 +166,7 @@ export function createOwner(ctx) {
     render();
   }
 
-  function go(section) { O.section = section; O.adding = false; render(); if (section !== 'menu') load(); }
+  function go(section) { O.section = section; O.adding = false; O.justRestocked = false; render(); if (section !== 'menu') load(); }
 
   // ---------------- views ----------------
   const head = (key) => `<button class="link" data-a="o-go" data-v="menu">← ${t('back')}</button><h1>${t(key)}</h1>`;
@@ -140,7 +191,7 @@ export function createOwner(ctx) {
     const n = (S.approvals || []).length;
     return `<h1>${t('owner')}</h1><div class="grid">${SECTIONS.map(([k, ic, key], i) =>
       `<button class="tile c${i % 6} otile" data-a="o-go" data-v="${k}">
-        <span class="oic">${ic}</span>${t(key)}${k === 'approvals' && n ? ` <span class="count">${n}</span>` : ''}</button>`).join('')}</div>`;
+        <span class="oic">${ic}</span>${t(key)}${k === 'approvals' && n ? ` <span class="count">${n}</span>` : ''}${k === 'bales' && isLow(S.stock) ? ` <span class="count">${t('low')}</span>` : ''}</button>`).join('')}</div>`;
   }
 
   function viewApprovals() {
@@ -212,7 +263,7 @@ export function createOwner(ctx) {
     const stockBy = {};
     (O.stock || []).forEach((s) => { stockBy[s.grade_id] = (stockBy[s.grade_id] || 0) + s.remaining; });
     const stockRows = S.catalog.grades.filter((g) => stockBy[g.id]).map((g) => [esc(gLabel(g.id)), stockBy[g.id]]);
-    return head('bales') + `<button class="primary" data-a="o-add">+ ${t('addBale')}</button>
+    return head('bales') + stockCard(S.stock, O.justRestocked) + `<button class="primary" data-a="o-add">+ ${t('addBale')}</button>
       ${stockRows.length ? `<h2>${t('inStock')}</h2>${table([t('items'), t('pieces')], stockRows)}` : ''}
       <h2>${t('bales')}</h2>
       ${O.bales.length ? O.bales.map((b) => {
@@ -442,6 +493,8 @@ export function createOwner(ctx) {
         <label>${t('businessName')}<input name="business_name" value="${esc(st.business_name)}" required></label>
         <label>${t('receiptPhone')}<input name="receipt_phone" value="${esc(st.receipt_phone)}" inputmode="tel"></label>
         <label>${t('receiptFooter')}<input name="receipt_footer" value="${esc(st.receipt_footer)}"></label>
+        <label>${t('lowStockLevel')}<input name="low_stock_threshold" type="number" inputmode="numeric" min="0"
+          value="${S.stock?.threshold ?? st.low_stock_threshold ?? 50}"></label>
         <button class="primary small">${t('save')}</button>
       </form></div>
       <div class="card"><h2>${t('notifications')}</h2>${viewPush()}</div>
@@ -458,7 +511,7 @@ export function createOwner(ctx) {
       case 'o-go': go(v); return true;
       case 'o-approvals': S.tab = 'owner'; go('approvals'); return true;
       case 'o-period': O.period = v; O.report = null; render(); load(); return true;
-      case 'o-add': O.adding = true; render(); return true;
+      case 'o-add': O.adding = true; O.justRestocked = false; render(); return true;
       case 'o-csv': { const [f, to] = periodRange(O.period); await exportCsv(f, to); return true; }
       case 'o-csvall': await exportCsv('2020-01-01', nbDate()); return true;
       case 'o-push-on': await enablePush(); return true;
@@ -501,7 +554,12 @@ export function createOwner(ctx) {
           p_received_on: f.get('date'), p_supplier: f.get('supplier') || null,
           p_cost: num('cost'), p_notes: f.get('notes') || null, p_lines: lines,
         }));
-        if (!error) O.adding = false;
+        if (!error) {
+          O.adding = false;
+          await loadStock();
+          stockCheck();                       // re-arms the alert when back above the level
+          if (isLow(S.stock)) O.justRestocked = true;
+        }
         break;
       }
       case 'grades': {
@@ -549,8 +607,9 @@ export function createOwner(ctx) {
           business_name: String(f.get('business_name')).trim(),
           receipt_phone: String(f.get('receipt_phone') || '').trim() || null,
           receipt_footer: String(f.get('receipt_footer') || '').trim() || null,
+          low_stock_threshold: Math.max(0, num('low_stock_threshold') || 0),
         }).eq('id', 1));
-        if (!error) await loadCatalog();
+        if (!error) { await loadCatalog(); await loadStock(); stockCheck(); }
         break;
       }
       case 'staff': {
@@ -569,5 +628,5 @@ export function createOwner(ctx) {
     return true;
   }
 
-  return { view, onClick, onSubmit, go, pollApprovals };
+  return { view, onClick, onSubmit, go, pollApprovals, loadStock, stockCheck, isLow: () => isLow(S.stock) };
 }

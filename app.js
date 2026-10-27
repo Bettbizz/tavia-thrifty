@@ -123,6 +123,7 @@ async function sync() {
   const mine = S.queue.filter((s) => !s.error && s.user_id === S.session.user.id);
   if (!mine.length) return;
   syncing = true;
+  let sent = 0;
   try {
     for (const s of mine) {
       const { error } = await sb.rpc('record_sale', {
@@ -134,10 +135,12 @@ async function sync() {
         s.error = error.message;          // rejected: show it, don't retry automatically
       } else {
         S.queue = S.queue.filter((x) => x.id !== s.id);
+        sent++;
       }
       saveQueue();
     }
   } finally { syncing = false; }
+  if (sent) { owner.stockCheck(); owner.loadStock(); }   // low-stock alert for owners
   if (S.tab === 'today') await loadToday();
   render();
 }
@@ -291,6 +294,8 @@ function shell(body) {
     ? `<div class="banner off">${t('offline')}</div>`
     : waiting ? `<div class="banner wait">${waiting} · ${t('pending')}</div>` : '';
   const asks = isOwner() ? (S.approvals || []).length : 0;
+  const lowBanner = isOwner() && owner.isLow() && !(S.tab === 'owner' && S.o.section === 'bales')
+    ? `<button class="banner lowb" data-a="o-gobales">⚠ ${t('lowBanner').replace('{n}', S.stock.total)}</button>` : '';
   const askBanner = asks && !(S.tab === 'owner' && S.o.section === 'approvals')
     ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
   return `
@@ -299,7 +304,7 @@ function shell(body) {
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
     </header>
-    ${askBanner}${banner}
+    ${askBanner}${lowBanner}${banner}
     <main>${body}</main>
     <nav class="tabs ${isOwner() ? 'three' : ''}">
       <button data-a="tab" data-v="sell" class="${S.tab === 'sell' ? 'on' : ''}"><span class="ic">🛍️</span>${t('sell')}</button>
@@ -543,6 +548,7 @@ app.addEventListener('click', async (e) => {
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
     case 'ask': await askOwner(); break;
+    case 'o-gobales': S.tab = 'owner'; owner.go('bales'); break;
     case 'print': {
       if (v === 'last') { await doPrint(S.lastSale, me()?.full_name); break; }
       const s = (S.today || []).find((x) => x.id === v) || S.queue.find((x) => x.id === v);
@@ -617,6 +623,7 @@ window.addEventListener('online', () => { render(); loadCatalog(); sync(); });
 window.addEventListener('offline', render);
 setInterval(sync, 30000);
 setInterval(() => { owner.pollApprovals(); checkRequest(); }, 6000);
+setInterval(() => owner.loadStock(), 120000);
 
 const owner = createOwner({ S, sb, t, esc, kes, render, toast, loadCatalog, loadProfile, priceInfo });
 
@@ -633,10 +640,11 @@ function start() {
       if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
         await Promise.all([loadProfile(), loadCatalog()]);
         render();
-        sync(); owner.pollApprovals(); checkRequest();
-        if (new URLSearchParams(location.search).get('go') === 'approvals' && isOwner()) {
+        sync(); owner.pollApprovals(); checkRequest(); owner.loadStock();
+        const go = new URLSearchParams(location.search).get('go');
+        if ((go === 'approvals' || go === 'bales') && isOwner()) {
           history.replaceState(null, '', location.pathname);
-          S.tab = 'owner'; owner.go('approvals');
+          S.tab = 'owner'; owner.go(go);
         }
       }
     }, 0);
@@ -648,6 +656,6 @@ start();
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', (e) => {   // notification tapped while app open
-    if (e.data?.go === 'approvals' && isOwner()) { S.tab = 'owner'; owner.go('approvals'); }
+    if ((e.data?.go === 'approvals' || e.data?.go === 'bales') && isOwner()) { S.tab = 'owner'; owner.go(e.data.go); }
   });
 }

@@ -1,6 +1,6 @@
 // Offline support: keeps the app's files on the phone so it opens without internet.
 // Change the version number whenever you upload a new version of the app.
-const CACHE = 'bizzfy-v7';
+const CACHE = 'bizzfy-v8';
 const PUSHLOG = 'bizzfy-pushlog';  // remembers when this phone last received a notification
 const SHELL = ['./', './index.html', './app.js', './i18n.js', './owner.js', './printer.js', './config.js', './style.css',
   './manifest.webmanifest', './icon-192.png', './icon-512.png'];
@@ -55,7 +55,9 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil((async () => {
     const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of wins) {
-      if (w.url.startsWith(self.registration.scope)) { await w.focus(); w.postMessage({ go: 'approvals' }); return; }
+      if (w.url.startsWith(self.registration.scope)) {
+        await w.focus(); w.postMessage({ go: new URL(url).searchParams.get('go') || 'approvals' }); return;
+      }
     }
     await clients.openWindow(url);
   })());

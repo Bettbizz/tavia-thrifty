@@ -68,6 +68,26 @@ Deno.serve(async (req) => {
         title: 'Bizzfy POS', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })));
     }
 
+    // Low-stock check: any staff phone asks after sales sync; alerts owners once per drop.
+    if (body.stock_check) {
+      const { data: chk, error } = await admin.rpc('low_stock_check');
+      if (error) return json({ error: error.message }, 500);
+      if (!chk?.alert) return json({ sent: 0, phones: 0, failed: [], ...chk });
+      const [{ data: shop }, { data: owners }] = await Promise.all([
+        admin.from('settings').select('business_name').eq('id', 1).single(),
+        admin.from('profiles').select('id').eq('role', 'owner').eq('active', true),
+      ]);
+      const ids = (owners ?? []).map((o) => o.id);
+      const { data: subs } = ids.length
+        ? await admin.from('push_subscriptions').select('endpoint, p256dh, auth').in('user_id', ids)
+        : { data: [] };
+      return json({ ...chk, ...(await sendAll(admin, subs ?? [], JSON.stringify({
+        title: `${shop?.business_name ?? 'Bizzfy POS'}: low stock`,
+        body: `Only ${chk.total} pieces left (alert level ${chk.threshold}). Tap to see what to restock.`,
+        url: './?go=bales', tag: 'low-stock',
+      }))) });
+    }
+
     const request_id = body.request_id;
     const { data: r } = await admin.from('price_requests')
       .select('id, total, status, requested_by').eq('id', request_id).single();
