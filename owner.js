@@ -1,4 +1,5 @@
-// Owner tab: approvals, reports, bales, prices, promotions, cash count, staff.
+// Owner tab: approvals, reports, bales, prices, promotions, cash count, staff, settings.
+import { VAPID_PUBLIC_KEY } from './config.js';
 // Everything here also needs owner rights in the database; hiding it in the
 // app is only for convenience.
 
@@ -9,8 +10,13 @@ const fmtDay = (iso) => new Date(iso).toLocaleDateString('en-KE', { day: 'numeri
 
 const SECTIONS = [
   ['approvals', '🔔', 'approvals'], ['reports', '📊', 'reports'], ['bales', '📦', 'bales'],
-  ['prices', '🏷️', 'prices'], ['promos', '🎉', 'promotions'], ['cash', '💰', 'cashCount'], ['staff', '👥', 'staff'],
+  ['prices', '🏷️', 'prices'], ['promos', '🎉', 'promotions'], ['cash', '💰', 'cashCount'], ['staff', '👥', 'staff'], ['settings', '⚙️', 'settings'],
 ];
+const b64ToBytes = (b64) => {
+  const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+};
+const csvCell = (v) => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
 
 export function createOwner(ctx) {
   const { S, sb, t, esc, kes, render, toast, loadCatalog, loadProfile, priceInfo } = ctx;
@@ -97,6 +103,7 @@ export function createOwner(ctx) {
           if (c.error) throw c.error;
           O.counts = c.data; O.cashToday = r.data?.cash ?? 0; break;
         }
+        case 'settings': await pushStatus(); break;
         case 'staff': {
           const { data, error } = await sb.from('profiles').select('id, full_name, email, role, active')
             .order('active').order('full_name');
@@ -128,6 +135,7 @@ export function createOwner(ctx) {
       case 'promos': return viewPromos();
       case 'cash': return viewCash();
       case 'staff': return viewStaff();
+      case 'settings': return viewSettings();
     }
     const n = (S.approvals || []).length;
     return `<h1>${t('owner')}</h1><div class="grid">${SECTIONS.map(([k, ic, key], i) =>
@@ -173,6 +181,7 @@ export function createOwner(ctx) {
       <div><small>${t('pieces')}</small><b>${r.pieces}</b></div>
       <div class="big"><small>${t('profit')}</small><b>${kes(profit)}</b></div>
     </div>`;
+    out += `<button class="link" data-a="o-csv">⬇ ${t('downloadCsv')}</button>`;
     if (r.unstocked) out += `<p class="warn">⚠ ${r.unstocked} ${t('unstocked')}</p>`;
     if (r.below_min) out += `<p class="small">${t('belowMinCount')}: ${r.below_min}</p>`;
     if (r.voided) out += `<p class="small">${t('voidedCount')}: ${r.voided}</p>`;
@@ -301,6 +310,89 @@ export function createOwner(ctx) {
       </form></div>`).join('');
   }
 
+  // ---------------- backup (CSV) ----------------
+  async function exportCsv(from, to) {
+    toast(t('loading'));
+    const rows = [['date', 'time', 'receipt', 'seller', 'payment', 'mpesa_code', 'status', 'price_approved',
+      'item', 'quantity', 'unit_price', 'line_total', 'below_lowest']];
+    for (let i = 0; ; i += 1000) {
+      const { data, error } = await sb.from('sales')
+        .select('id, sold_at, payment_method, mpesa_code, status, approved_by, seller:profiles!sales_sold_by_fkey(full_name), sale_lines(quantity, unit_price, grade_id, below_min)')
+        .gte('sold_at', nbStart(from)).lt('sold_at', nbStart(addDays(to, 1)))
+        .order('sold_at').range(i, i + 999);
+      if (error) return fail(error);
+      for (const sale of data) {
+        const d = new Date(sale.sold_at);
+        const day = nbDate(d);
+        const time = d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
+        for (const l of sale.sale_lines) {
+          rows.push([day, time, sale.id.slice(0, 8).toUpperCase(), sale.seller?.full_name, sale.payment_method,
+            sale.mpesa_code, sale.status, sale.approved_by ? 'yes' : '', gLabel(l.grade_id), l.quantity,
+            l.unit_price, l.quantity * l.unit_price, l.below_min ? 'yes' : '']);
+        }
+      }
+      if (data.length < 1000) break;
+    }
+    const blob = new Blob(['﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `sales_${from}_to_${to}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  // ---------------- phone notifications ----------------
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  async function pushStatus() {
+    O.pushOn = false;
+    if (!pushSupported()) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    O.pushOn = !!sub && Notification.permission === 'granted';
+  }
+  async function enablePush() {
+    if (!pushSupported()) return toast(t('pushUnsupported'), true);
+    if (await Notification.requestPermission() !== 'granted') return toast(t('pushDenied'), true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription())
+        || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY) });
+      const j = sub.toJSON();
+      const { error } = await sb.rpc('save_push_subscription', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+      if (error) return fail(error);
+      toast(t('pushOn'));
+    } catch (e) { fail(e); }
+    await pushStatus(); render();
+  }
+  async function disablePush() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (sub) { await sb.rpc('remove_push_subscription', { p_endpoint: sub.endpoint }); await sub.unsubscribe(); }
+    await pushStatus(); render();
+  }
+
+  function viewSettings() {
+    const st = S.settings || {};
+    return head('settings') + `<div class="card"><h2>${t('shopDetails')}</h2>
+      <form class="form" data-form="shop">
+        <label>${t('businessName')}<input name="business_name" value="${esc(st.business_name)}" required></label>
+        <label>${t('receiptPhone')}<input name="receipt_phone" value="${esc(st.receipt_phone)}" inputmode="tel"></label>
+        <label>${t('receiptFooter')}<input name="receipt_footer" value="${esc(st.receipt_footer)}"></label>
+        <button class="primary small">${t('save')}</button>
+      </form></div>
+      <div class="card"><h2>${t('notifications')}</h2>
+        <p class="small">${O.pushOn ? '🟢 ' + t('pushOn') : t('pushOff')}</p>
+        <p class="small muted">${t('pushIphone')}</p>
+        ${O.pushOn ? `<button class="link danger" data-a="o-push-off">${t('turnOff')}</button>`
+                   : `<button class="primary small" data-a="o-push-on">🔔 ${t('turnOn')}</button>`}
+      </div>
+      <div class="card"><h2>${t('printer')}</h2>
+        <button class="primary small" data-a="printer">🖨 ${t('printerSettings')}</button></div>
+      <div class="card"><h2>${t('backup')}</h2>
+        <p class="small muted">${t('backupHelp')}</p>
+        <button class="primary small" data-a="o-csvall">⬇ ${t('downloadAll')}</button></div>`;
+  }
+
   // ---------------- clicks ----------------
   async function onClick(a, v) {
     switch (a) {
@@ -308,6 +400,10 @@ export function createOwner(ctx) {
       case 'o-approvals': S.tab = 'owner'; go('approvals'); return true;
       case 'o-period': O.period = v; O.report = null; render(); load(); return true;
       case 'o-add': O.adding = true; render(); return true;
+      case 'o-csv': { const [f, to] = periodRange(O.period); await exportCsv(f, to); return true; }
+      case 'o-csvall': await exportCsv('2020-01-01', nbDate()); return true;
+      case 'o-push-on': await enablePush(); return true;
+      case 'o-push-off': await disablePush(); return true;
       case 'o-cancel': O.adding = false; render(); return true;
       case 'o-approve': await decide(v, true); render(); return true;
       case 'o-reject': if (confirm(t('reject') + '?')) { await decide(v, false); render(); } return true;
@@ -385,6 +481,15 @@ export function createOwner(ctx) {
           p_date: nbDate(), p_opening_float: num('float') || 0, p_counted: num('counted'), p_notes: f.get('notes') || null });
         error = e;
         if (!e) toast(`${t('difference')}: ${kes(data)}${data < 0 ? ' ' + t('short') : data > 0 ? ' ' + t('over') : ' ✓'}`, data < 0);
+        break;
+      }
+      case 'shop': {
+        ({ error } = await sb.from('settings').update({
+          business_name: String(f.get('business_name')).trim(),
+          receipt_phone: String(f.get('receipt_phone') || '').trim() || null,
+          receipt_footer: String(f.get('receipt_footer') || '').trim() || null,
+        }).eq('id', 1));
+        if (!error) await loadCatalog();
         break;
       }
       case 'staff': {

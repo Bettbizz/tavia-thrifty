@@ -1,8 +1,9 @@
-// Tavia Thrifty POS — phone app (v1: login, Sell, Today, offline, EN/SW)
+// Bizzfy POS — phone app
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
 import { createOwner } from './owner.js';
+import { printReceipt, getPrefs, setPrefs, connectPrinter, printerName, bluetoothSupported } from './printer.js';
 
 const app = document.getElementById('app');
 
@@ -26,6 +27,8 @@ const S = {
   session: null,
   profile: store.get('profile', null),
   catalog: store.get('catalog', { categories: [], grades: [], promotions: [] }),
+  settings: store.get('settings', { business_name: '' }),
+  printerView: false,
   queue: store.get('queue', []),        // sales saved on this phone, not yet sent
   cart: [],
   tab: 'sell',
@@ -92,6 +95,8 @@ async function loadCatalog() {
   if (c.error || g.error || p.error) return;
   S.catalog = { categories: c.data, grades: g.data, promotions: p.data };
   store.set('catalog', S.catalog);
+  const st = await sb.from('settings').select('business_name, receipt_phone, receipt_footer').eq('id', 1).single();
+  if (!st.error && st.data) { S.settings = st.data; store.set('settings', st.data); }
 }
 
 function nairobiDayStart() {
@@ -182,6 +187,7 @@ function completeSale() {
   S.cart = []; S.mpesa = ''; S.pay = 'cash';
   S.screen = 'done';
   render();
+  if (getPrefs().auto) doPrint(sale, me()?.full_name);
   sync();
 }
 
@@ -203,6 +209,7 @@ async function askOwner() {
   S.busy = false;
   if (error) { toast(isNetErr(error) ? t('needsInternetAsk') : error.message, true); return render(); }
   S.pendingReq = req; store.set('pendingReq', req);
+  sb.functions.invoke('notify-owners', { body: { request_id: req.id } }).catch(() => {});  // phone notification
   S.screen = 'waiting'; render();
 }
 
@@ -214,6 +221,7 @@ async function checkRequest() {
   S.pendingReq = null; store.set('pendingReq', null);
   if (data.status === 'approved') {
     S.lastSale = req; S.cart = []; S.mpesa = ''; S.pay = 'cash'; S.screen = 'done';
+    if (getPrefs().auto) doPrint(req, me()?.full_name);
     if (S.tab === 'today') await loadToday();
   } else {
     S.cart = req.lines.map((l) => ({ ...l })); S.screen = 'cart';
@@ -230,6 +238,17 @@ async function cancelRequest() {
   if (S.pendingReq) {          // offline or not yet cancelled: go back to the cart anyway
     S.cart = req.lines.map((l) => ({ ...l })); S.pendingReq = null; store.set('pendingReq', null);
     S.screen = 'cart'; render();
+  }
+}
+
+async function doPrint(sale, seller) {
+  try {
+    await printReceipt({
+      ...sale, seller,
+      lines: (sale.lines || sale.sale_lines).map((l) => ({ ...l, label: gradeLabel(grade(l.grade_id)) })),
+    }, S.settings);
+  } catch (e) {
+    if (e?.name !== 'NotFoundError') toast(`${t('printFailed')}: ${e?.message || ''}`, true);  // NotFoundError = picker closed
   }
 }
 
@@ -276,7 +295,7 @@ function shell(body) {
     ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
   return `
     <header class="top">
-      <div class="brand">Thrifty</div>
+      <div class="brand">${esc(S.settings.business_name || 'Bizzfy POS')}</div>
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
     </header>
@@ -294,7 +313,8 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login">
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
-      <div class="brand big">Thrifty</div>
+      <div class="brand big">${esc(S.settings.business_name || 'Bizzfy POS')}</div>
+      ${S.settings.business_name ? '<p class="product">Bizzfy POS</p>' : ''}
       ${S.notice ? `<p class="note">${esc(S.notice)}</p>` : ''}
       ${S.signup ? `<form id="signup">
         <label>${t('yourName')}<input name="name" autocomplete="name" required></label>
@@ -420,10 +440,34 @@ function renderDone() {
         <b>${kes(s.total)}</b></div>
     </div>
     <button class="primary" data-a="new">${t('newSale')}</button>
+    <button class="link printbtn" data-a="print" data-v="last">🖨 ${t('printReceipt')}</button>
   </div>`;
 }
 
+function renderPrinter() {
+  const p = getPrefs();
+  const bt = bluetoothSupported();
+  return `<button class="link" data-a="printer-close">← ${t('back')}</button>
+    <h1>${t('printerSettings')}</h1>
+    <form class="form card" id="printerform">
+      <label>${t('printerMode')}<select name="mode">
+        <option value="system" ${p.mode === 'system' ? 'selected' : ''}>${t('modeSystem')}</option>
+        <option value="bluetooth" ${p.mode === 'bluetooth' ? 'selected' : ''} ${bt ? '' : 'disabled'}>${t('modeBluetooth')}</option>
+      </select></label>
+      ${bt ? '' : `<p class="small muted">${t('btUnsupported')}</p>`}
+      <label>${t('paper')}<select name="paper">
+        <option value="58" ${p.paper == 58 ? 'selected' : ''}>58 mm</option>
+        <option value="80" ${p.paper == 80 ? 'selected' : ''}>80 mm</option></select></label>
+      <label class="check"><input type="checkbox" name="auto" ${p.auto ? 'checked' : ''}> ${t('autoPrint')}</label>
+      <button class="primary small">${t('save')}</button>
+    </form>
+    ${bt && p.mode === 'bluetooth' ? `<div class="card"><div class="srow"><span>${printerName() ? `${t('connectedTo')}: <b>${esc(printerName())}</b>` : t('notConnected')}</span></div>
+      <button class="primary small" data-a="printer-connect">${t('connectPrinter')}</button></div>` : ''}
+    <button class="primary small" data-a="printer-test">🖨 ${t('testPrint')}</button>`;
+}
+
 function renderToday() {
+  if (S.printerView) return renderPrinter();
   const uid = S.session.user.id;
   const local = S.queue.filter((s) => s.user_id === uid || isOwner());
   const server = S.today || [];
@@ -450,7 +494,8 @@ function renderToday() {
       <span>${s.payment_method === 'mpesa' ? `M-Pesa ${esc(s.mpesa_code)}` : t('cash')}
         ${s.status === 'voided' ? ` · <b>${t('voided')}</b>` : ''}
         ${s.approved_by ? ` · ✓ ${t('approvedPrice')}` : ''}</span>
-      ${isOwner() && s.status === 'completed' ? `<button class="link danger" data-a="void" data-v="${s.id}">${t('void')}</button>` : ''}
+      <span>${s.status === 'completed' ? `<button class="link" data-a="print" data-v="${s.id}">🖨</button>` : ''}
+      ${isOwner() && s.status === 'completed' ? `<button class="link danger" data-a="void" data-v="${s.id}">${t('void')}</button>` : ''}</span>
     </div>
   </div>`).join('');
 
@@ -465,6 +510,7 @@ function renderToday() {
     ${S.today === null && online() ? `<p class="center">${t('loading')}</p>` : ''}
     ${!localRows && !serverRows && S.today !== null ? `<p class="center">${t('noSales')}</p>` : ''}
     ${localRows}${serverRows}
+    <button class="link logout" data-a="printer">🖨 ${t('printerSettings')}</button>
     <button class="link logout" data-a="logout">${t('logout')}</button>`;
 }
 
@@ -475,12 +521,13 @@ app.addEventListener('click', async (e) => {
   const a = b.dataset.a, v = b.dataset.v;
   switch (a) {
     case 'lang': setLang(getLang() === 'en' ? 'sw' : 'en'); render(); break;
-    case 'tab':
-      S.tab = v;
-      if (v === 'sell' && S.screen === 'done') S.screen = 'categories';
+    case 'tab':  // a bottom tab always opens the start of its section
+      S.tab = v; S.printerView = false;
+      if (v === 'sell' && S.screen !== 'waiting') S.screen = 'categories';
+      if (v === 'owner') S.o.section = 'menu';
       render();
       if (v === 'today') { await loadToday(); render(); }
-      if (v === 'owner') owner.go(S.o.section);
+      if (v === 'owner') owner.go('menu');
       break;
     case 'cat': S.categoryId = v; S.screen = 'grades'; render(); break;
     case 'screen': S.screen = v; render(); break;
@@ -496,6 +543,22 @@ app.addEventListener('click', async (e) => {
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
     case 'ask': await askOwner(); break;
+    case 'print': {
+      if (v === 'last') { await doPrint(S.lastSale, me()?.full_name); break; }
+      const s = (S.today || []).find((x) => x.id === v) || S.queue.find((x) => x.id === v);
+      if (s) await doPrint(s, s.seller?.full_name || me()?.full_name);
+      break;
+    }
+    case 'printer': S.tab = 'today'; S.printerView = true; render(); break;
+    case 'printer-close': S.printerView = false; render(); break;
+    case 'printer-connect':
+      try { await connectPrinter(); toast(`${t('connectedTo')}: ${printerName()}`); }
+      catch (e) { if (e?.name !== 'NotFoundError') toast(e.message, true); }
+      render(); break;
+    case 'printer-test':
+      await doPrint({ id: 'TEST0000', sold_at: new Date().toISOString(), payment_method: 'cash', total: 0,
+        lines: S.catalog.grades.slice(0, 1).map((g) => ({ grade_id: g.id, quantity: 1, unit_price: 0 })) }, me()?.full_name);
+      break;
     case 'cancelreq': await cancelRequest(); break;
     case 'recheck': await loadProfile(); render(); break;
     case 'signup': S.signup = v === '1'; S.loginError = ''; S.notice = ''; render(); break;
@@ -518,6 +581,12 @@ app.addEventListener('input', (e) => {
 app.addEventListener('submit', async (e) => {
   if (e.target.dataset.form) { e.preventDefault(); return owner.onSubmit(e.target); }
   if (e.target.id === 'signup') { e.preventDefault(); return signup(e.target); }
+  if (e.target.id === 'printerform') {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    setPrefs({ mode: f.get('mode'), paper: Number(f.get('paper')), auto: f.get('auto') === 'on' });
+    toast(t('saved')); return;
+  }
   if (e.target.id !== 'login') return;
   e.preventDefault();
   const f = new FormData(e.target);
@@ -565,6 +634,10 @@ function start() {
         await Promise.all([loadProfile(), loadCatalog()]);
         render();
         sync(); owner.pollApprovals(); checkRequest();
+        if (new URLSearchParams(location.search).get('go') === 'approvals' && isOwner()) {
+          history.replaceState(null, '', location.pathname);
+          S.tab = 'owner'; owner.go('approvals');
+        }
       }
     }, 0);
   });
@@ -572,4 +645,9 @@ function start() {
 
 start();
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', (e) => {   // notification tapped while app open
+    if (e.data?.go === 'approvals' && isOwner()) { S.tab = 'owner'; owner.go('approvals'); }
+  });
+}

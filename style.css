@@ -173,3 +173,16 @@ summary { color: var(--brand); font-weight: 600; padding: 6px 0; cursor: pointer
 .tabs.three { grid-template-columns: 1fr 1fr 1fr; }
 .askbtn { background: var(--warn); }
 .waitt { background: var(--warn) !important; }
+
+.product { text-align: center; color: var(--muted); margin: -16px 0 20px; font-size: .9rem; }
+.printbtn { display: block; margin: 12px auto 0; font-size: 1.05rem; }
+#print-area { display: none; }
+@media print {
+  @page { margin: 0; size: var(--paper, 58mm) auto; }
+  body > *:not(#print-area) { display: none !important; }
+  #print-area { display: block !important; width: var(--paper, 58mm); padding: 2mm; font: 11px/1.3 monospace; color: #000; }
+  #print-area hr { border: 0; border-top: 1px dashed #000; }
+  #print-area .r-c { text-align: center; }
+  #print-area .r-shop { font-size: 15px; display: block; }
+  #print-area .r-row { display: flex; justify-content: space-between; }
+}

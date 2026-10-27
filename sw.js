@@ -1,7 +1,7 @@
 // Offline support: keeps the app's files on the phone so it opens without internet.
 // Change the version number whenever you upload a new version of the app.
-const CACHE = 'thrifty-v2';
-const SHELL = ['./', './index.html', './app.js', './i18n.js', './owner.js', './config.js', './style.css',
+const CACHE = 'bizzfy-v3';
+const SHELL = ['./', './index.html', './app.js', './i18n.js', './owner.js', './printer.js', './config.js', './style.css',
   './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -35,4 +35,26 @@ self.addEventListener('fetch', (e) => {
     if (req.mode === 'navigate') return cache.match('./index.html');
     return new Response('', { status: 504 });
   }));
+});
+
+// Phone notifications (e.g. price approvals for owners)
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Bizzfy POS', {
+    body: d.body || '', tag: d.tag, icon: './icon-192.png', badge: './icon-192.png',
+    data: { url: d.url || './' }, requireInteraction: true,
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL(e.notification.data?.url || './', self.registration.scope).href;
+  e.waitUntil((async () => {
+    const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) {
+      if (w.url.startsWith(self.registration.scope)) { await w.focus(); w.postMessage({ go: 'approvals' }); return; }
+    }
+    await clients.openWindow(url);
+  })());
 });

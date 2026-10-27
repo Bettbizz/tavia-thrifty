@@ -1,6 +1,6 @@
 {
-  "name": "Thrifty POS",
-  "short_name": "Thrifty",
+  "name": "Bizzfy POS",
+  "short_name": "Bizzfy POS",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

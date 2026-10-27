@@ -1,4 +1,7 @@
-# Tavia Thrifty POS — version 1
+# Bizzfy POS
+
+Point of sale for small shops. This copy runs **Tavia Thrifty** (the business
+name is set in Owner → Settings).
 
 A phone app (installable web app) for recording sales at Thrifty.
 It runs on Android, iPhone and computers, keeps working during short internet
@@ -12,6 +15,9 @@ cuts, and is in English and Kiswahili.
 | `seed.sql` | Starting price list (categories, grades, prices). Run once. |
 | `migrations/` | Database updates, run in order once each. |
 | `owner.js` | The Owner tab. |
+| `printer.js` | Receipt printing (Bluetooth or the phone's print menu). |
+| `supabase/functions/notify-owners/` | Sends approval notifications to owners' phones. |
+| `.github/workflows/deploy-supabase.yml` | Applies database updates and deploys the function automatically. |
 | `config.js` | Your Supabase address and publishable key. |
 | `index.html`, `app.js`, `i18n.js`, `style.css` | The app itself. |
 | `sw.js`, `manifest.webmanifest`, `icon-*.png` | Make it installable and work offline. |
@@ -73,3 +79,29 @@ Enforced by the database, not just hidden in the app:
 
 Owners see approval requests while the app is open (it checks every few
 seconds).
+
+## Automatic database updates
+
+Files in `migrations/` are applied to Supabase automatically by GitHub
+(each file once, in order, recorded in the `app_migrations` table). A file
+that fails is rolled back completely and nothing is recorded. Updates only
+ever add or change structure; they never delete your sales or stock.
+
+One-time setup: GitHub → repository → Settings → Secrets and variables →
+Actions → New repository secret, for each of:
+
+| Secret | Where to get it |
+|---|---|
+| `SUPABASE_DB_URL` | Supabase → **Connect** → **Session pooler** connection string, with `[YOUR-PASSWORD]` replaced by your database password |
+| `SUPABASE_ACCESS_TOKEN` | supabase.com → your account → **Access Tokens** → Generate new token |
+| `VAPID_PRIVATE_KEY` | The private notification key you were given (keep it secret) |
+
+## Your data is safe across updates
+
+- Sales, stock, prices and staff live in the Supabase database, not in the app.
+  App updates only replace the app's files.
+- Sales made offline wait on the phone and survive app updates. They are lost
+  only if the phone's browser data for the app is cleared, or the app is
+  uninstalled, before they send, so let the "Waiting to send" count reach zero
+  before doing either.
+- Owner → Settings → Backup downloads every sale as a spreadsheet file.
