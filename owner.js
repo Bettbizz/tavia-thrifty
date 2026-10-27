@@ -343,12 +343,21 @@ export function createOwner(ctx) {
 
   // ---------------- phone notifications ----------------
   const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  // O.push: 'unsupported' | 'blocked' | 'off' | 'on'
+  async function saveSub(sub) {
+    const j = sub.toJSON();
+    const { error } = await sb.rpc('save_push_subscription', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    return error;
+  }
   async function pushStatus() {
-    O.pushOn = false;
-    if (!pushSupported()) return;
+    if (!pushSupported()) { O.push = 'unsupported'; return; }
+    if (Notification.permission === 'denied') { O.push = 'blocked'; return; }
     const reg = await navigator.serviceWorker.getRegistration();
     const sub = reg && await reg.pushManager.getSubscription();
-    O.pushOn = !!sub && Notification.permission === 'granted';
+    if (!sub || Notification.permission !== 'granted') { O.push = 'off'; return; }
+    // Make sure the server still knows this phone; re-register quietly if not.
+    const { data } = await sb.from('push_subscriptions').select('endpoint').eq('endpoint', sub.endpoint);
+    O.push = (data && data.length) || !(await saveSub(sub)) ? 'on' : 'off';
   }
   async function enablePush() {
     if (!pushSupported()) return toast(t('pushUnsupported'), true);
@@ -357,8 +366,7 @@ export function createOwner(ctx) {
       const reg = await navigator.serviceWorker.ready;
       const sub = (await reg.pushManager.getSubscription())
         || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY) });
-      const j = sub.toJSON();
-      const { error } = await sb.rpc('save_push_subscription', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+      const error = await saveSub(sub);
       if (error) return fail(error);
       toast(t('pushOn'));
     } catch (e) { fail(e); }
@@ -371,6 +379,29 @@ export function createOwner(ctx) {
     await pushStatus(); render();
   }
 
+  function viewPush() {
+    switch (O.push) {
+      case 'on': return `<div class="status on">🔔 ${t('pushOnThisPhone')}</div>
+        <div class="two"><button class="primary small" data-a="o-push-test">${t('sendTest')}</button>
+        <button class="btn plain" data-a="o-push-off">${t('turnOff')}</button></div>`;
+      case 'blocked': return `<div class="status bad">🔕 ${t('pushBlockedTitle')}</div>
+        <p class="small">${t('pushDenied')}</p>
+        <button class="link" data-a="o-push-recheck">↻ ${t('checkAgain')}</button>`;
+      case 'unsupported': return `<div class="status bad">🔕 ${t('pushUnsupported')}</div>
+        <p class="small muted">${t('pushIphone')}</p>`;
+      case 'off': return `<div class="status off">🔕 ${t('pushOffShort')}</div>
+        <p class="small">${t('pushOff')}</p><p class="small muted">${t('pushIphone')}</p>
+        <button class="primary small" data-a="o-push-on">🔔 ${t('turnOn')}</button>`;
+      default: return `<p class="small muted">${t('loading')}</p>`;
+    }
+  }
+
+  async function sendTest() {
+    const { data, error } = await sb.functions.invoke('notify-owners', { body: { test: true } });
+    if (error || !data?.sent) return toast(t('testFailed'), true);
+    toast(t('testSent'));
+  }
+
   function viewSettings() {
     const st = S.settings || {};
     return head('settings') + `<div class="card"><h2>${t('shopDetails')}</h2>
@@ -380,12 +411,7 @@ export function createOwner(ctx) {
         <label>${t('receiptFooter')}<input name="receipt_footer" value="${esc(st.receipt_footer)}"></label>
         <button class="primary small">${t('save')}</button>
       </form></div>
-      <div class="card"><h2>${t('notifications')}</h2>
-        <p class="small">${O.pushOn ? '🟢 ' + t('pushOn') : t('pushOff')}</p>
-        <p class="small muted">${t('pushIphone')}</p>
-        ${O.pushOn ? `<button class="link danger" data-a="o-push-off">${t('turnOff')}</button>`
-                   : `<button class="primary small" data-a="o-push-on">🔔 ${t('turnOn')}</button>`}
-      </div>
+      <div class="card"><h2>${t('notifications')}</h2>${viewPush()}</div>
       <div class="card"><h2>${t('printer')}</h2>
         <button class="primary small" data-a="printer">🖨 ${t('printerSettings')}</button></div>
       <div class="card"><h2>${t('backup')}</h2>
@@ -403,7 +429,9 @@ export function createOwner(ctx) {
       case 'o-csv': { const [f, to] = periodRange(O.period); await exportCsv(f, to); return true; }
       case 'o-csvall': await exportCsv('2020-01-01', nbDate()); return true;
       case 'o-push-on': await enablePush(); return true;
-      case 'o-push-off': await disablePush(); return true;
+      case 'o-push-off': await disablePush(); toast(t('pushOffShort')); return true;
+      case 'o-push-test': await sendTest(); return true;
+      case 'o-push-recheck': await pushStatus(); render(); return true;
       case 'o-cancel': O.adding = false; render(); return true;
       case 'o-approve': await decide(v, true); render(); return true;
       case 'o-reject': if (confirm(t('reject') + '?')) { await decide(v, false); render(); } return true;

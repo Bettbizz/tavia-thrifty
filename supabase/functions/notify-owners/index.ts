@@ -23,6 +23,22 @@ function adminKey(): string {
   return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 }
 
+type Sub = { endpoint: string; p256dh: string; auth: string };
+// deno-lint-ignore no-explicit-any
+async function sendAll(admin: any, subs: Sub[], payload: string): Promise<number> {
+  let sent = 0;
+  await Promise.all(subs.map(async (s) => {
+    try {
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 600 });
+      sent++;
+    } catch (e) {
+      // Phone unsubscribed or app removed: forget it.
+      if (e?.statusCode === 404 || e?.statusCode === 410) await admin.from('push_subscriptions').delete().eq('endpoint', s.endpoint);
+    }
+  }));
+  return sent;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
@@ -33,7 +49,19 @@ Deno.serve(async (req) => {
     const { data: { user } } = await admin.auth.getUser(token);
     if (!user) return json({ error: 'not logged in' }, 401);
 
-    const { request_id } = await req.json();
+    const body = await req.json();
+    webpush.setVapidDetails(
+      Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@example.com',
+      Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!);
+
+    // "Send test notification" from Owner → Settings: only to the caller's own phones.
+    if (body.test) {
+      const { data: mine } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth').eq('user_id', user.id);
+      return json({ sent: await sendAll(admin, mine ?? [], JSON.stringify({
+        title: 'Bizzfy POS', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })) });
+    }
+
+    const request_id = body.request_id;
     const { data: r } = await admin.from('price_requests')
       .select('id, total, status, requested_by').eq('id', request_id).single();
     if (!r || r.requested_by !== user.id || r.status !== 'pending') return json({ error: 'no such request' }, 400);
@@ -48,10 +76,6 @@ Deno.serve(async (req) => {
     const { data: subs } = await admin.from('push_subscriptions')
       .select('endpoint, p256dh, auth').in('user_id', ownerIds);
 
-    webpush.setVapidDetails(
-      Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@example.com',
-      Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!);
-
     const payload = JSON.stringify({
       title: `${shop?.business_name ?? 'Bizzfy POS'}: price approval`,
       body: `${who?.full_name ?? 'Staff'} is asking to sell for KES ${Number(r.total).toLocaleString('en-KE')}. Tap to review.`,
@@ -59,17 +83,7 @@ Deno.serve(async (req) => {
       tag: 'approval-' + r.id,
     });
 
-    let sent = 0;
-    await Promise.all((subs ?? []).map(async (s) => {
-      try {
-        await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 600 });
-        sent++;
-      } catch (e) {
-        // Phone unsubscribed or app removed: forget it.
-        if (e?.statusCode === 404 || e?.statusCode === 410) await admin.from('push_subscriptions').delete().eq('endpoint', s.endpoint);
-      }
-    }));
-    return json({ sent });
+    return json({ sent: await sendAll(admin, subs ?? [], payload) });
   } catch (e) {
     return json({ error: String(e?.message ?? e) }, 500);
   }

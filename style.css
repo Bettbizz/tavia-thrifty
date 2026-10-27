@@ -186,3 +186,9 @@ summary { color: var(--brand); font-weight: 600; padding: 6px 0; cursor: pointer
   #print-area .r-shop { font-size: 15px; display: block; }
   #print-area .r-row { display: flex; justify-content: space-between; }
 }
+
+.status { display: inline-block; border-radius: 99px; padding: 6px 14px; font-weight: 800; margin-bottom: 10px; }
+.status.on { background: #e3f1e8; color: var(--ok); }
+.status.off { background: #f1ece8; color: var(--muted); }
+.status.bad { background: #fde7e5; color: var(--bad); }
+.btn.plain { background: var(--card); color: var(--bad); border: 2px solid var(--line); }
