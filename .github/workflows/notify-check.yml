@@ -22,6 +22,7 @@ jobs:
           command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
           psql "$DB_URL" -tA -c "select coalesce(json_agg(json_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth, 'name', p.full_name, 'role', p.role, 'active', p.active, 'created', s.created_at)), '[]') from push_subscriptions s join profiles p on p.id = s.user_id" > subs.json
           psql "$DB_URL" -tA -F ' | ' -c "select 'owners active: ' || count(*) from profiles where role='owner' and active" | sed 's/^/::notice::/'
+          psql "$DB_URL" -tA -c "select 'data: ' || (select count(*) from sales) || ' sales, ' || (select count(*) from bales) || ' bales/stock deliveries, ' || (select count(*) from price_requests) || ' approvals, ' || (select string_agg(name || ' (' || kind || ')', ', ' order by sort_order) from businesses) || ', migrations: ' || (select string_agg(name, ', ' order by name) from app_migrations)" | sed 's/^/::notice::/'
           psql "$DB_URL" -tA -F ' | ' -c "select to_char(requested_at at time zone 'Africa/Nairobi','DD Mon HH24:MI'), status, total from price_requests order by requested_at desc limit 5" | sed 's/^/::notice::recent request: /'
       - name: Send a test notification to each owner phone
         env:

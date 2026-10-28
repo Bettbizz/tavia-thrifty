@@ -198,3 +198,34 @@ summary { color: var(--brand); font-weight: 600; padding: 6px 0; cursor: pointer
 .banner.lowb { display: block; width: 100%; text-align: left; background: #fde7e5; color: var(--bad); }
 ol.sug { margin: 4px 0 0; padding-left: 20px; }
 ol.sug li { margin-bottom: 8px; font-size: .95rem; }
+
+/* business switch */
+.bizswitch { color: inherit; font-weight: 800; font-size: 1.1rem; padding: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.bizswitch span { font-size: .85rem; opacity: .8; }
+/* item icons on Sell */
+.tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+.ticon { font-size: 2.4rem; line-height: 1; }
+/* stock monitors: one narrow bar per item group */
+.mon { padding: 10px 12px; }
+.mon h2 { margin: 0 0 8px; font-size: 1rem; }
+.mrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.micon { width: 24px; text-align: center; font-size: 1.15rem; line-height: 1; flex: none; }
+.mbar { position: relative; flex: 1; height: 20px; border-radius: 99px; background: #eee6df; overflow: hidden;
+  display: flex; justify-content: space-between; align-items: center; padding: 0 8px; font-size: .78rem; }
+.mbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; }
+.mbar b, .mbar em { position: relative; font-style: normal; font-weight: 800; }
+.mbar em { color: var(--muted); font-weight: 600; }
+.mbar.green i { background: #3fae6a; } .mbar.orange i { background: #f0a030; } .mbar.red i { background: #d9473e; }
+.mbar.green b, .mbar.orange b, .mbar.red b { color: #fff; text-shadow: 0 0 2px rgba(0,0,0,.35); }
+.mbar.none { background: #f3efeb; color: var(--muted); }
+.grouprow { display: grid; grid-template-columns: 70px 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
+.grouprow label { margin-bottom: 0 !important; }
+.iconin { text-align: center; font-size: 1.4rem !important; }
+
+.mpbox { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-bottom: 10px; }
+.mppaste { margin-bottom: 10px; }
+.mpbox textarea { display: block; width: 100%; margin-top: 4px; border: 2px solid var(--line); border-radius: 12px; padding: 8px; font: inherit; font-size: .9rem; }
+.mpchoice { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; width: 100%; text-align: left; padding: 10px 12px;
+  margin-bottom: 6px; border: 2px solid var(--line); border-radius: 12px; background: #fff; font-size: .95rem; }
+.mpchoice b { letter-spacing: 1px; }
+.mpesa input[data-a="mp-buyer"] { text-transform: none; letter-spacing: 0; font-size: 1.05rem; }

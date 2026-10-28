@@ -12,9 +12,9 @@ jobs:
       - name: Files are not empty and have valid syntax
         run: |
           set -e
-          for f in index.html app.js owner.js printer.js i18n.js config.js sw.js style.css manifest.webmanifest; do
+          for f in index.html app.js owner.js printer.js mpesa.js i18n.js config.js sw.js style.css manifest.webmanifest; do
             [ -s "$f" ] || { echo "::error file=$f::$f is empty"; exit 1; }
           done
-          for f in app.js owner.js printer.js i18n.js config.js sw.js; do node --check "$f"; done
+          for f in app.js owner.js printer.js mpesa.js i18n.js config.js sw.js; do node --check "$f"; done
           grep -q "addEventListener('push'" sw.js || { echo "::error file=sw.js::sw.js has no notification handler"; exit 1; }
           node -e "JSON.parse(require('fs').readFileSync('manifest.webmanifest','utf8'))"

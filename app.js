@@ -3,6 +3,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
 import { createOwner } from './owner.js';
+import { parseMessages, chooseCode } from './mpesa.js';
 import { printReceipt, getPrefs, setPrefs, connectPrinter, printerName, bluetoothSupported } from './printer.js';
 
 const app = document.getElementById('app');
@@ -28,6 +29,8 @@ const S = {
   profile: store.get('profile', null),
   catalog: store.get('catalog', { categories: [], grades: [], promotions: [] }),
   settings: store.get('settings', { business_name: '' }),
+  businesses: store.get('businesses', []),
+  biz: store.get('biz', null),            // business currently selected on this phone
   printerView: false,
   queue: store.get('queue', []),        // sales saved on this phone, not yet sent
   cart: [],
@@ -57,6 +60,16 @@ const saveQueue = () => store.set('queue', S.queue);
 const grade = (id) => S.catalog.grades.find((g) => g.id === id);
 const category = (id) => S.catalog.categories.find((c) => c.id === id);
 const gradeLabel = (g) => (g ? `${category(g.category_id)?.name ?? ''} · ${g.name}` : '?');
+// ---------- businesses (e.g. Tavia Thrifty + jewellery) ----------
+const curBiz = () => S.businesses.find((b) => b.id === S.biz) || null;
+const bizById = (id) => S.businesses.find((b) => b.id === id) || null;
+const inBiz = (c) => !S.biz || !c?.business_id || c.business_id === S.biz;
+const bizOfLines = (lines) => category(grade(lines?.[0]?.grade_id)?.category_id)?.business_id || null;
+const shopFor = (bizId) => {
+  const b = bizById(bizId) || curBiz();
+  return b ? { business_name: b.name, receipt_phone: b.receipt_phone, receipt_footer: b.receipt_footer } : S.settings;
+};
+const shopName = () => curBiz()?.name || S.settings.business_name || 'Bizzfy POS';
 
 function activePromo(gradeId, at = new Date()) {
   return S.catalog.promotions
@@ -87,7 +100,7 @@ async function loadCatalog() {
   if (!online() || !S.session) return;
   const now = new Date().toISOString();
   const [c, g, p] = await Promise.all([
-    sb.from('categories').select('id, name, sort_order').eq('active', true).order('sort_order').order('name'),
+    sb.from('categories').select('*').eq('active', true).order('sort_order').order('name'),
     sb.from('grades').select('id, category_id, name, normal_price, min_price, sort_order')
       .eq('active', true).order('sort_order').order('name'),
     sb.from('promotions').select('grade_id, promo_price, starts_at, ends_at').gt('ends_at', now),
@@ -95,8 +108,15 @@ async function loadCatalog() {
   if (c.error || g.error || p.error) return;
   S.catalog = { categories: c.data, grades: g.data, promotions: p.data };
   store.set('catalog', S.catalog);
-  const st = await sb.from('settings').select('business_name, receipt_phone, receipt_footer').eq('id', 1).single();
+  const [st, bz] = await Promise.all([
+    sb.from('settings').select('business_name, receipt_phone, receipt_footer').eq('id', 1).single(),
+    sb.from('businesses').select('*').eq('active', true).order('sort_order'),
+  ]);
   if (!st.error && st.data) { S.settings = st.data; store.set('settings', st.data); }
+  if (!bz.error && bz.data) {
+    S.businesses = bz.data; store.set('businesses', bz.data);
+    if (!S.businesses.some((b) => b.id === S.biz)) { S.biz = S.businesses[0]?.id || null; store.set('biz', S.biz); }
+  }
 }
 
 function nairobiDayStart() {
@@ -107,7 +127,7 @@ function nairobiDayStart() {
 async function loadToday() {
   if (!online() || !S.session) return;
   const { data, error } = await sb.from('sales')
-    .select('id, sold_at, total, payment_method, mpesa_code, status, sold_by, approved_by, ' +
+    .select('*, ' +
             'seller:profiles!sales_sold_by_fkey(full_name), sale_lines(quantity, unit_price, grade_id)')
     .gte('sold_at', nairobiDayStart().toISOString())
     .order('sold_at', { ascending: false });
@@ -188,6 +208,7 @@ function completeSale() {
   saveQueue();
   S.lastSale = sale;
   S.cart = []; S.mpesa = ''; S.pay = 'cash';
+  S.mpInfo = null; S.mpChoices = null; S.mpBuyer = ''; S.mpManual = false; S.mpText = '';
   S.screen = 'done';
   render();
   if (getPrefs().auto) doPrint(sale, me()?.full_name);
@@ -249,7 +270,7 @@ async function doPrint(sale, seller) {
     await printReceipt({
       ...sale, seller,
       lines: (sale.lines || sale.sale_lines).map((l) => ({ ...l, label: gradeLabel(grade(l.grade_id)) })),
-    }, S.settings);
+    }, shopFor(sale.business_id || bizOfLines(sale.lines || sale.sale_lines)));
   } catch (e) {
     if (e?.name !== 'NotFoundError') toast(`${t('printFailed')}: ${e?.message || ''}`, true);  // NotFoundError = picker closed
   }
@@ -294,13 +315,17 @@ function shell(body) {
     ? `<div class="banner off">${t('offline')}</div>`
     : waiting ? `<div class="banner wait">${waiting} · ${t('pending')}</div>` : '';
   const asks = isOwner() ? (S.approvals || []).length : 0;
-  const lowBanner = isOwner() && owner.isLow() && !(S.tab === 'owner' && S.o.section === 'bales')
-    ? `<button class="banner lowb" data-a="o-gobales">⚠ ${t('lowBanner').replace('{n}', S.stock.total)}</button>` : '';
+  const lows = isOwner() ? owner.lowGroups() : [];
+  const lowBanner = lows.length && !(S.tab === 'owner' && ['bales', 'menu'].includes(S.o.section))
+    ? `<button class="banner lowb" data-a="o-gobales">⚠ ${t('lowBannerGroups').replace('{list}',
+        lows.map((g) => `${esc(g.icon || g.name)} ${g.remaining}`).join(' · '))}</button>` : '';
   const askBanner = asks && !(S.tab === 'owner' && S.o.section === 'approvals')
     ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
   return `
     <header class="top">
-      <div class="brand">${esc(S.settings.business_name || 'Bizzfy POS')}</div>
+      ${S.businesses.length > 1
+        ? `<button class="brand bizswitch" data-a="biz">${esc(shopName())} <span>⇄</span></button>`
+        : `<div class="brand">${esc(shopName())}</div>`}
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
     </header>
@@ -318,8 +343,9 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login">
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
-      <div class="brand big">${esc(S.settings.business_name || 'Bizzfy POS')}</div>
-      ${S.settings.business_name ? '<p class="product">Bizzfy POS</p>' : ''}
+      <div class="brand big">${esc(S.businesses.length > 1 ? 'Bizzfy POS' : shopName())}</div>
+      ${S.businesses.length > 1 ? `<p class="product">${S.businesses.map((b) => esc(b.name)).join(' · ')}</p>`
+        : S.settings.business_name ? '<p class="product">Bizzfy POS</p>' : ''}
       ${S.notice ? `<p class="note">${esc(S.notice)}</p>` : ''}
       ${S.signup ? `<form id="signup">
         <label>${t('yourName')}<input name="name" autocomplete="name" required></label>
@@ -349,11 +375,11 @@ function renderSell() {
   if (S.screen === 'done') return renderDone();
   if (S.screen === 'cart') return renderCart();
   if (S.screen === 'grades') return renderGrades();
-  const cats = S.catalog.categories;
+  const cats = S.catalog.categories.filter(inBiz);
   if (!cats.length) return `<p class="center">${t('noCatalog')}</p>`;
   return `<h1>${t('chooseCategory')}</h1>
     <div class="grid">${cats.map((c, i) =>
-      `<button class="tile c${i % 6}" data-a="cat" data-v="${c.id}">${esc(c.name)}</button>`).join('')}</div>
+      `<button class="tile c${i % 6}" data-a="cat" data-v="${c.id}">${c.icon ? `<span class="ticon">${esc(c.icon)}</span>` : ''}<span>${esc(c.name)}</span></button>`).join('')}</div>
     ${cartBar()}`;
 }
 
@@ -361,7 +387,7 @@ function renderGrades() {
   const cat = category(S.categoryId);
   const gs = S.catalog.grades.filter((g) => g.category_id === S.categoryId);
   return `<button class="link" data-a="screen" data-v="categories">← ${t('back')}</button>
-    <h1>${esc(cat?.name)}</h1><p class="sub">${t('chooseGrade')}</p>
+    <h1>${cat?.icon ? esc(cat.icon) + ' ' : ''}${esc(cat?.name)}</h1><p class="sub">${t('chooseGrade')}</p>
     <div class="list">${gs.map((g) => {
       const pi = priceInfo(g);
       return `<button class="grade" data-a="add" data-v="${g.id}">
@@ -407,13 +433,55 @@ function renderCart() {
       <button data-a="pay" data-v="cash" class="${S.pay === 'cash' ? 'on' : ''}">💵 ${t('cash')}</button>
       <button data-a="pay" data-v="mpesa" class="${S.pay === 'mpesa' ? 'on' : ''}">📱 ${t('mpesa')}</button>
     </div>
-    ${S.pay === 'mpesa' ? `<label class="mpesa">${t('mpesaCode')}
-      <input data-a="mpesa" autocapitalize="characters" autocomplete="off" spellcheck="false"
-        placeholder="${t('mpesaCodeHint')}" value="${esc(S.mpesa)}"></label>` : ''}
+    ${S.pay === 'mpesa' ? renderMpesa() : ''}
     <div class="total"><span>${t('total')}</span><b>${kes(cartTotal())}</b></div>
     ${blocked
       ? `<button class="primary askbtn" data-a="ask" ${S.busy ? 'disabled' : ''}>🔔 ${t('askOwnerBtn')}</button>`
       : `<button class="primary" data-a="complete">${t('complete')}</button>`}`;
+}
+
+// ---------- M-Pesa: paste the confirmation message to fill the code ----------
+function usedCodes() {
+  return [...S.queue, ...(S.today || []), S.lastSale || {}].map((s) => s.mpesa_code).filter(Boolean);
+}
+async function applyMpesaText(text) {
+  if (online()) await loadToday();   // fresh list of codes already used today
+  const msgs = parseMessages(text);
+  S.mpChoices = null; S.mpInfo = null;
+  if (!msgs.length) { toast(t('mpNoMessage'), true); return render(); }
+  const r = chooseCode(msgs, { total: cartTotal(), buyer: S.mpBuyer, usedCodes: usedCodes() });
+  if (r.pick) { S.mpesa = r.pick.code; S.mpInfo = r.pick; S.mpManual = false; S.mpText = ''; }
+  else if (r.choices.length) { S.mpChoices = r.choices; S.mpReason = r.reason; }
+  else toast(t('mpNoneReceived'), true);
+  render();
+}
+async function pasteMpesa() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && text.trim()) return await applyMpesaText(text);
+  } catch { /* clipboard not allowed: fall back to a box the seller pastes into */ }
+  S.mpManual = true; render();
+  setTimeout(() => document.querySelector('[data-a="mp-text"]')?.focus(), 50);
+}
+function renderMpesa() {
+  const info = S.mpInfo;
+  const wrongAmount = info && info.amount != null && info.amount !== cartTotal();
+  return `<div class="mpbox">
+    <button class="primary small mppaste" data-a="mp-paste">📋 ${t('mpPaste')}</button>
+    <label class="mpesa">${t('mpBuyer')}
+      <input data-a="mp-buyer" autocomplete="off" value="${esc(S.mpBuyer || '')}" placeholder="${t('mpBuyerHint')}"></label>
+    ${S.mpManual ? `<label class="mpesa">${t('mpPasteHere')}
+      <textarea data-a="mp-text" rows="3">${esc(S.mpText || '')}</textarea></label>
+      <button class="link" data-a="mp-read">${t('mpRead')}</button>` : ''}
+    ${S.mpChoices ? `<p class="warn">${t(S.mpReason === 'similar' ? 'mpSimilar' : S.mpReason === 'name' ? 'mpNoName' : 'mpNoAmount')}</p>
+      ${S.mpChoices.map((m) => `<button class="mpchoice" data-a="mp-pick" data-v="${m.code}">
+        <b>${esc(m.code)}</b><span>${esc(m.name || '?')}</span><span>${m.amount != null ? kes(m.amount) : ''}</span></button>`).join('')}` : ''}
+    <label class="mpesa">${t('mpesaCode')}
+      <input data-a="mpesa" autocapitalize="characters" autocomplete="off" spellcheck="false"
+        placeholder="${t('mpesaCodeHint')}" value="${esc(S.mpesa)}"></label>
+    ${info ? `<p class="${wrongAmount ? 'warn' : 'note'}">${wrongAmount ? '⚠ ' : '✓ '}${esc(info.name || '')}${info.amount != null ? ' · ' + kes(info.amount) : ''}
+      ${wrongAmount ? `<br>${t('mpWrongAmount').replace('{amount}', kes(info.amount)).replace('{total}', kes(cartTotal()))}` : ''}</p>` : ''}
+  </div>`;
 }
 
 function renderWaiting() {
@@ -474,8 +542,10 @@ function renderPrinter() {
 function renderToday() {
   if (S.printerView) return renderPrinter();
   const uid = S.session.user.id;
-  const local = S.queue.filter((s) => s.user_id === uid || isOwner());
-  const server = S.today || [];
+  // Today shows the business selected at the top (cash counts cover both).
+  const mineBiz = (s) => !S.biz || (s.business_id || bizOfLines(s.lines || s.sale_lines)) === S.biz;
+  const local = S.queue.filter((s) => (s.user_id === uid || isOwner()) && mineBiz(s));
+  const server = (S.today || []).filter(mineBiz);
   const done = server.filter((s) => s.status === 'completed');
   const pendingOk = local.filter((s) => !s.error);
   const sum = (arr, m) => arr.filter((s) => !m || s.payment_method === m).reduce((a, s) => a + s.total, 0);
@@ -541,6 +611,13 @@ app.addEventListener('click', async (e) => {
     case 'dec': if (S.cart[+v].quantity > 1) S.cart[+v].quantity--; else S.cart.splice(+v, 1); render(); break;
     case 'rm': S.cart.splice(+v, 1); render(); break;
     case 'pay': S.pay = v; render(); break;
+    case 'mp-paste': await pasteMpesa(); break;
+    case 'mp-read': await applyMpesaText(S.mpText); break;
+    case 'mp-pick': {
+      const m = (S.mpChoices || []).find((x) => x.code === v);
+      if (m) { S.mpesa = m.code; S.mpInfo = m; S.mpChoices = null; S.mpManual = false; S.mpText = ''; }
+      render(); break;
+    }
     case 'complete': completeSale(); break;
     case 'new': S.screen = 'categories'; S.lastSale = null; render(); break;
     case 'refresh': await Promise.all([loadToday(), loadCatalog()]); render(); break;
@@ -548,6 +625,17 @@ app.addEventListener('click', async (e) => {
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
     case 'ask': await askOwner(); break;
+    case 'biz': {
+      if (S.cart.length || S.screen === 'waiting') { toast(t('finishSaleFirst'), true); break; }
+      const i = S.businesses.findIndex((b) => b.id === S.biz);
+      S.biz = S.businesses[(i + 1) % S.businesses.length]?.id || null; store.set('biz', S.biz);
+      S.screen = 'categories'; S.categoryId = null;
+      toast(shopName());
+      if (S.tab === 'today') await loadToday();
+      if (S.tab === 'owner') owner.go(S.o.section);
+      owner.loadStock();
+      render(); break;
+    }
     case 'o-gobales': S.tab = 'owner'; owner.go('bales'); break;
     case 'print': {
       if (v === 'last') { await doPrint(S.lastSale, me()?.full_name); break; }
@@ -581,7 +669,9 @@ app.addEventListener('change', (e) => {
 });
 
 app.addEventListener('input', (e) => {
-  if (e.target.dataset.a === 'mpesa') S.mpesa = e.target.value;
+  if (e.target.dataset.a === 'mpesa') { S.mpesa = e.target.value; if (S.mpInfo && S.mpInfo.code !== S.mpesa.trim().toUpperCase()) S.mpInfo = null; }
+  if (e.target.dataset.a === 'mp-buyer') S.mpBuyer = e.target.value;
+  if (e.target.dataset.a === 'mp-text') S.mpText = e.target.value;
 });
 
 app.addEventListener('submit', async (e) => {

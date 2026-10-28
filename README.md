@@ -96,6 +96,29 @@ Actions → New repository secret, for each of:
 | `SUPABASE_ACCESS_TOKEN` | supabase.com → your account → **Access Tokens** → Generate new token |
 | `VAPID_PRIVATE_KEY` | The private notification key you were given (keep it secret) |
 
+## Two businesses
+
+Tap the business name at the top to switch between Tavia Thrifty and the
+jewellery business. Each has its own item groups, prices, stock, sales,
+reports and receipt name (Owner → Settings edits the selected business).
+Staff, logins and the end-of-day cash count are shared. A sale can only
+contain items from one business.
+
+## Stock monitors
+
+Owner tab (top) and Bales/Stock: one bar per item group, icon on the left,
+current pieces on the left of the bar and the level after the last restock
+on the right. Green → orange → red; red means below that group's alert level
+(set per group in Owner → Prices, default 50 for clothes, 10 for jewellery).
+Owners get one phone notification each time a group drops below its level.
+
+## M-Pesa codes
+
+At checkout choose M-Pesa, copy the M-Pesa message and tap **Paste M-Pesa
+message**. The app reads the code, name and amount from the latest
+messages, matches the sale total and optional buyer name, and asks the seller
+to choose when two payments look alike. A code can't be used on two sales.
+
 ## Your data is safe across updates
 
 - Sales, stock, prices and staff live in the Supabase database, not in the app.

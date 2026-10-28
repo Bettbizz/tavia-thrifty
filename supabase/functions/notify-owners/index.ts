@@ -43,6 +43,15 @@ async function sendAll(admin: any, subs: Sub[], payload: string) {
   return { sent, phones: subs.length, failed };
 }
 
+// deno-lint-ignore no-explicit-any
+async function ownerSubs(admin: any): Promise<Sub[]> {
+  const { data: owners } = await admin.from('profiles').select('id').eq('role', 'owner').eq('active', true);
+  const ids = (owners ?? []).map((o: { id: string }) => o.id);
+  if (!ids.length) return [];
+  const { data } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth').in('user_id', ids);
+  return data ?? [];
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
@@ -68,49 +77,47 @@ Deno.serve(async (req) => {
         title: 'Bizzfy POS', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })));
     }
 
-    // Low-stock check: any staff phone asks after sales sync; alerts owners once per drop.
+    // Low-stock check: any staff phone asks after sales sync; alerts owners once per group per drop.
     if (body.stock_check) {
       const { data: chk, error } = await admin.rpc('low_stock_check');
       if (error) return json({ error: error.message }, 500);
-      if (!chk?.alert) return json({ sent: 0, phones: 0, failed: [], ...chk });
-      const [{ data: shop }, { data: owners }] = await Promise.all([
-        admin.from('settings').select('business_name').eq('id', 1).single(),
-        admin.from('profiles').select('id').eq('role', 'owner').eq('active', true),
-      ]);
-      const ids = (owners ?? []).map((o) => o.id);
-      const { data: subs } = ids.length
-        ? await admin.from('push_subscriptions').select('endpoint, p256dh, auth').in('user_id', ids)
-        : { data: [] };
-      return json({ ...chk, ...(await sendAll(admin, subs ?? [], JSON.stringify({
-        title: `${shop?.business_name ?? 'Bizzfy POS'}: low stock`,
-        body: `Only ${chk.total} pieces left (alert level ${chk.threshold}). Tap to see what to restock.`,
+      const alerts = (chk?.alerts ?? []) as { name: string; icon: string; remaining: number; threshold: number; business: string }[];
+      if (!alerts.length) return json({ sent: 0, phones: 0, failed: [], alerts });
+      const subs = await ownerSubs(admin);
+      const one = alerts.length === 1 ? alerts[0] : null;
+      return json({ alerts, ...(await sendAll(admin, subs, JSON.stringify({
+        title: `${alerts[0].business}: low stock`,
+        body: one
+          ? `${one.icon ?? ''} ${one.name}: only ${one.remaining} left (alert level ${one.threshold}). Tap to see what to restock.`
+          : alerts.map((a) => `${a.icon ?? ''} ${a.name} ${a.remaining}`).join(', ') + ' are running low. Tap to see what to restock.',
         url: './?go=bales', tag: 'low-stock',
       }))) });
     }
 
     const request_id = body.request_id;
     const { data: r } = await admin.from('price_requests')
-      .select('id, total, status, requested_by').eq('id', request_id).single();
+      .select('id, total, status, requested_by, lines').eq('id', request_id).single();
     if (!r || r.requested_by !== user.id || r.status !== 'pending') return json({ error: 'no such request' }, 400);
 
-    const [{ data: who }, { data: shop }, { data: owners }] = await Promise.all([
+    const firstGrade = (r.lines?.[0]?.grade_id) as string | undefined;
+    const [{ data: who }, { data: g }, subs] = await Promise.all([
       admin.from('profiles').select('full_name').eq('id', user.id).single(),
-      admin.from('settings').select('business_name').eq('id', 1).single(),
-      admin.from('profiles').select('id').eq('role', 'owner').eq('active', true),
+      firstGrade
+        ? admin.from('grades').select('categories(businesses(name))').eq('id', firstGrade).single()
+        : Promise.resolve({ data: null }),
+      ownerSubs(admin),
     ]);
-    const ownerIds = (owners ?? []).map((o) => o.id);
-    if (!ownerIds.length) return json({ sent: 0, phones: 0, failed: [] });
-    const { data: subs } = await admin.from('push_subscriptions')
-      .select('endpoint, p256dh, auth').in('user_id', ownerIds);
+    // deno-lint-ignore no-explicit-any
+    const bizName = (g as any)?.categories?.businesses?.name ?? 'Bizzfy POS';
 
     const payload = JSON.stringify({
-      title: `${shop?.business_name ?? 'Bizzfy POS'}: price approval`,
+      title: `${bizName}: price approval`,
       body: `${who?.full_name ?? 'Staff'} is asking to sell for KES ${Number(r.total).toLocaleString('en-KE')}. Tap to review.`,
       url: './?go=approvals',
       tag: 'approval-' + r.id,
     });
 
-    return json(await sendAll(admin, subs ?? [], payload));
+    return json(await sendAll(admin, subs, payload));
   } catch (e) {
     return json({ error: String(e?.message ?? e) }, 500);
   }

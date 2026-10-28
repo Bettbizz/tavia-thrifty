@@ -27,7 +27,11 @@ export function createOwner(ctx) {
 
   // active catalogue, grouped by category in display order
   const grouped = (cats, grades) => cats.map((c) => ({ c, gs: grades.filter((g) => g.category_id === c.id) }));
-  const activeGroups = () => grouped(S.catalog.categories, S.catalog.grades);
+  // Only the business selected at the top of the app.
+  const inBiz = (c) => !S.biz || !c?.business_id || c.business_id === S.biz;
+  const curBiz = () => (S.businesses || []).find((b) => b.id === S.biz) || null;
+  const pieces = () => curBiz()?.kind === 'pieces';           // jewellery: stock comes per piece, not bales
+  const activeGroups = () => grouped(S.catalog.categories.filter(inBiz), S.catalog.grades);
   const gLabel = (id) => {
     const g = (O.grades || S.catalog.grades).find((x) => x.id === id);
     const c = (O.cats || S.catalog.categories).find((x) => x.id === g?.category_id);
@@ -55,53 +59,69 @@ export function createOwner(ctx) {
     toast(data === 'approved' ? t('approve') + ' ✓' : t('reject'), data !== 'approved');
   }
 
-  // ---------------- stock monitor ----------------
+  // ---------------- stock monitors (one bar per item group) ----------------
   async function loadStock() {
-    if (!navigator.onLine || S.profile?.role !== 'owner') return;
-    const { data, error } = await sb.rpc('stock_status');
+    if (!navigator.onLine || S.profile?.role !== 'owner' || !S.biz) return;
+    const { data, error } = await sb.rpc('stock_status', { p_business: S.biz });
     if (!error && data) { S.stock = data; render(); }
   }
-  // Ask the server to alert owners if stock just dropped below the level (once per drop).
+  // Ask the server to alert owners if a group just dropped below its level (once per drop).
   const stockCheck = () => sb.functions.invoke('notify-owners', { body: { stock_check: true } }).catch(() => {});
-  const isLow = (st) => st && st.has_bales && st.threshold > 0 && st.total < st.threshold;
+  const isLowG = (g) => g.has_stock && g.threshold > 0 && g.remaining < g.threshold;
+  const lowGroups = (st) => (st?.groups || []).filter(isLowG);
   const fill = (key, v) => t(key).replace(/\{(\w+)\}/g, (_, k) => v[k] ?? '');
+  const gName = (g) => `${g.icon ? g.icon + ' ' : ''}${g.name}`;
+
+  // green → orange → red: red below the alert level, orange in the lower half above it.
+  function barColour(g) {
+    const full = Math.max(g.full || 0, g.remaining);
+    if (g.remaining < g.threshold) return 'red';
+    return g.remaining < g.threshold + (full - g.threshold) / 2 ? 'orange' : 'green';
+  }
+
+  function monitors(st) {
+    const groups = st?.groups || [];
+    if (!groups.length) return '';
+    return `<div class="card mon"><h2>${t('stockMonitors')}</h2>${groups.map((g) => {
+      const full = Math.max(g.full || 0, g.remaining);
+      const pct = full ? Math.max(0, Math.min(100, (g.remaining / full) * 100)) : 0;
+      return `<div class="mrow" title="${esc(g.name)}">
+        <span class="micon">${esc(g.icon || '•')}</span>
+        ${g.has_stock
+          ? `<div class="mbar ${barColour(g)}"><i style="width:${pct.toFixed(1)}%"></i><b>${g.remaining}</b><em>${full}</em></div>`
+          : `<div class="mbar none"><b>—</b><em>${t('noStockYet')}</em></div>`}
+      </div>`;
+    }).join('')}</div>`;
+  }
 
   function suggestions(st) {
-    const rate = st.sold14 / 14;                       // pieces sold per day, last 2 weeks
-    const need = Math.max(0, st.threshold - st.total);  // to get back to the alert level
-    const twoWeeks = Math.ceil(rate * 14);
-    const buy = Math.max(need, twoWeeks - st.total, 0);
     const out = [];
-    if (buy > 0) {
-      const rounded = Math.ceil(buy / 10) * 10;
-      out.push(rate > 0 ? fill('sugBuyPace', { n: rounded, level: st.threshold })
-                        : fill('sugBuyLevel', { n: rounded, level: st.threshold }));
+    for (const g of lowGroups(st)) {
+      const rate = g.sold14 / 14;
+      const buy = Math.max(g.threshold - g.remaining, Math.ceil(rate * 14) - g.remaining, 0);
+      const n = Math.ceil(buy / 5) * 5;
+      const start = st.items.filter((i) => i.category_id === g.id && i.sold14 > 0).slice(0, 2)
+        .map((i) => fill('sugFastItem', { item: i.item.split(' · ').pop(), sold: i.sold14, left: i.remaining }));
+      out.push(fill('sugGroup', { name: gName(g), n, level: g.threshold })
+        + (rate > 0 ? ' ' + t('sugGroupPace') : '')
+        + (start.length ? ' ' + t('sugStart') + ' ' + start.join('; ') + '.' : ''));
     }
-    const fast = st.items.filter((i) => i.sold14 > 0 && i.remaining < Math.ceil(i.sold14 / 2)).slice(0, 3);
-    if (fast.length) out.push(t('sugFast') + ' ' + fast.map((i) =>
-      fill('sugFastItem', { item: i.item, sold: i.sold14, left: i.remaining })).join('; ') + '.');
     const slow = st.items.filter((i) => i.remaining >= 5 && i.sold30 === 0).slice(0, 3);
     if (slow.length) out.push(t('sugSlow') + ' ' + slow.map((i) =>
       fill('sugSlowItem', { item: i.item, left: i.remaining })).join('; ') + '. ' + t('sugSlowAction'));
     out.push(t('sugFirm'));
-    out.push(fill('sugLevel', { level: st.threshold }));
+    out.push(t('sugLevelGroups'));
     return out;
   }
 
-  function stockCard(st, afterRestock) {
-    if (!st) return '';
-    if (!st.has_bales) return `<div class="card"><h2>📦 ${t('stockMonitor')}</h2><p class="small">${t('stockNoBales')}</p></div>`;
-    const low = isLow(st);
-    const rate = st.sold14 / 14;
-    const days = rate > 0 ? Math.floor(st.total / rate) : null;
-    return `<div class="card ${low ? 'lowcard' : ''}">
-      <h2>📦 ${t('stockMonitor')}</h2>
-      <div class="srow"><span>${t('piecesInStock')}</span><b class="${low ? 'neg' : 'pos'}">${st.total}</b></div>
-      <div class="srow small"><span>${t('alertLevel')}</span><span>${st.threshold}</span></div>
-      ${rate > 0 ? `<div class="srow small"><span>${t('pace')}</span><span>${fill('paceValue', { rate: rate.toFixed(1), days })}</span></div>` : ''}
-      ${low ? `<div class="warn">⚠ ${afterRestock ? fill('stillLow', { level: st.threshold }) : fill('lowNow', { n: st.total, level: st.threshold })}</div>
-        <h2>${t('whatToDo')}</h2><ol class="sug">${suggestions(st).map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
-    </div>`;
+  function stockAdvice(st, afterRestock) {
+    const low = lowGroups(st);
+    if (!st?.groups?.length) return '';
+    if (!st.groups.some((g) => g.has_stock)) return `<p class="small muted">${pieces() ? t('stockNoPieces') : t('stockNoBales')}</p>`;
+    if (!low.length) return '';
+    const list = low.map((g) => `${gName(g)} ${g.remaining}`).join(', ');
+    return `<div class="card lowcard"><div class="warn">⚠ ${fill(afterRestock ? 'stillLowGroups' : 'lowNowGroups', { list })}</div>
+      <h2>${t('whatToDo')}</h2><ol class="sug">${suggestions(st).map((x) => `<li>${esc(x)}</li>`).join('')}</ol></div>`;
   }
 
   // ---------------- loading per section ----------------
@@ -119,13 +139,13 @@ export function createOwner(ctx) {
         case 'approvals': await pollApprovals(); break;
         case 'reports': {
           const [f, to] = periodRange(O.period);
-          const { data, error } = await sb.rpc('sales_report', { p_from: f, p_to: to });
+          const { data, error } = await sb.rpc('sales_report', { p_from: f, p_to: to, p_business: S.biz });
           if (error) throw error;
           O.report = data; break;
         }
         case 'bales': {
           const [b, s] = await Promise.all([
-            sb.rpc('bale_report'),
+            sb.rpc('bale_report', { p_business: S.biz }),
             sb.from('bale_stock').select('grade_id, remaining').gt('remaining', 0),
           ]);
           if (b.error) throw b.error;
@@ -134,7 +154,8 @@ export function createOwner(ctx) {
         }
         case 'prices': {
           const [c, g] = await Promise.all([
-            sb.from('categories').select('*').order('sort_order').order('name'),
+            S.biz ? sb.from('categories').select('*').eq('business_id', S.biz).order('sort_order').order('name')
+                  : sb.from('categories').select('*').order('sort_order').order('name'),
             sb.from('grades').select('*').order('sort_order').order('name'),
           ]);
           if (c.error || g.error) throw c.error || g.error;
@@ -149,7 +170,7 @@ export function createOwner(ctx) {
         case 'cash': {
           const [c, r] = await Promise.all([
             sb.from('cash_counts').select('*').order('count_date', { ascending: false }).limit(14),
-            sb.rpc('sales_report', { p_from: nbDate(), p_to: nbDate() }),
+            sb.rpc('sales_report', { p_from: nbDate(), p_to: nbDate(), p_business: null }),
           ]);
           if (c.error) throw c.error;
           O.counts = c.data; O.cashToday = r.data?.cash ?? 0; break;
@@ -189,9 +210,10 @@ export function createOwner(ctx) {
       case 'settings': return viewSettings();
     }
     const n = (S.approvals || []).length;
-    return `<h1>${t('owner')}</h1><div class="grid">${SECTIONS.map(([k, ic, key], i) =>
+    const nLow = lowGroups(S.stock).length;
+    return monitors(S.stock) + `<div class="grid">${SECTIONS.map(([k, ic, key], i) =>
       `<button class="tile c${i % 6} otile" data-a="o-go" data-v="${k}">
-        <span class="oic">${ic}</span>${t(key)}${k === 'approvals' && n ? ` <span class="count">${n}</span>` : ''}${k === 'bales' && isLow(S.stock) ? ` <span class="count">${t('low')}</span>` : ''}</button>`).join('')}</div>`;
+        <span class="oic">${ic}</span>${k === 'bales' && pieces() ? t('stockTile') : t(key)}${k === 'approvals' && n ? ` <span class="count">${n}</span>` : ''}${k === 'bales' && nLow ? ` <span class="count">${nLow} ${t('low')}</span>` : ''}</button>`).join('')}</div>`;
   }
 
   function viewApprovals() {
@@ -247,25 +269,28 @@ export function createOwner(ctx) {
 
   function viewBales() {
     if (O.adding) {
-      return head('addBale') + `<form class="form" data-form="bale">
+      return head(pieces() ? 'addStock' : 'addBale') + `<form class="form" data-form="bale">
         <label>${t('date')}<input type="date" name="date" value="${nbDate()}" required></label>
         <label>${t('supplier')}<input name="supplier" autocomplete="off"></label>
-        <label>${t('baleCost')}<input name="cost" type="number" inputmode="numeric" min="0" required></label>
+        <label>${pieces() ? t('stockCost') : t('baleCost')}<input name="cost" type="number" inputmode="numeric" min="0" required></label>
         <p class="sub">${t('piecesPerGrade')}</p>
-        ${activeGroups().map(({ c, gs }) => `<fieldset><legend>${esc(c.name)}</legend>${gs.map((g) =>
+        ${activeGroups().map(({ c, gs }) => `<fieldset><legend>${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</legend>${gs.map((g) =>
           `<label class="qrow"><span>${esc(g.name)}</span><input type="number" inputmode="numeric" min="0" name="q_${g.id}"></label>`).join('')}</fieldset>`).join('')}
         <label>${t('notes')}<input name="notes" autocomplete="off"></label>
         <button class="primary">${t('save')}</button>
         <button type="button" class="link" data-a="o-cancel">${t('cancel')}</button>
       </form>`;
     }
-    if (!O.bales) return head('bales') + loading;
+    const title = pieces() ? 'stockTile' : 'bales';
+    if (!O.bales) return head(title) + loading;
     const stockBy = {};
     (O.stock || []).forEach((s) => { stockBy[s.grade_id] = (stockBy[s.grade_id] || 0) + s.remaining; });
-    const stockRows = S.catalog.grades.filter((g) => stockBy[g.id]).map((g) => [esc(gLabel(g.id)), stockBy[g.id]]);
-    return head('bales') + stockCard(S.stock, O.justRestocked) + `<button class="primary" data-a="o-add">+ ${t('addBale')}</button>
+    const stockRows = S.catalog.grades.filter((g) => stockBy[g.id] && inBiz(S.catalog.categories.find((c) => c.id === g.category_id)))
+      .map((g) => [esc(gLabel(g.id)), stockBy[g.id]]);
+    return head(title) + monitors(S.stock) + stockAdvice(S.stock, O.justRestocked)
+      + `<button class="primary" data-a="o-add">+ ${pieces() ? t('addStock') : t('addBale')}</button>
       ${stockRows.length ? `<h2>${t('inStock')}</h2>${table([t('items'), t('pieces')], stockRows)}` : ''}
-      <h2>${t('bales')}</h2>
+      <h2>${pieces() ? t('deliveries') : t('bales')}</h2>
       ${O.bales.length ? O.bales.map((b) => {
         const bal = b.sold_value - b.cost;
         return `<div class="card">
@@ -274,13 +299,18 @@ export function createOwner(ctx) {
           <div class="small">${t('balance')}: ${money(bal, true)}${bal >= 0 ? ` ✓ ${t('paidOff')}` : ''}</div>
           <div class="small muted">${(b.lines || []).map((l) => `${esc(l.item)}: ${l.left}/${l.quantity}`).join(' · ')}</div>
         </div>`;
-      }).join('') : `<p class="center">${t('noBales')}</p>`}`;
+      }).join('') : `<p class="center">${pieces() ? t('noDeliveries') : t('noBales')}</p>`}`;
   }
 
   function viewPrices() {
     if (!O.cats) return head('prices') + loading;
     return head('prices') + grouped(O.cats, O.grades).map(({ c, gs }) => `<div class="card">
-      <h2>${esc(c.name)}</h2>
+      <h2>${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</h2>
+      <form class="form grouprow" data-form="group" data-cat="${c.id}">
+        <label>${t('icon')}<input name="icon" value="${esc(c.icon || '')}" maxlength="8" class="iconin"></label>
+        <label>${t('alertBelow')}<input name="threshold" type="number" inputmode="numeric" min="0" value="${c.low_stock_threshold ?? 50}"></label>
+        <button class="primary small">${t('save')}</button>
+      </form>
       <form class="form" data-form="grades" data-cat="${c.id}">
         <div class="prow phead"><span></span><span>${t('normal')}</span><span>${t('lowest')}</span><span></span></div>
         ${gs.map((g) => `<div class="prow ${g.active ? '' : 'hidden'}">
@@ -300,13 +330,18 @@ export function createOwner(ctx) {
         </form></details>
     </div>`).join('') + `<div class="card"><h2>${t('addCategory')}</h2>
       <form class="form" data-form="addcat"><label>${t('name')}<input name="name" required></label>
+      <div class="two"><label>${t('icon')}<input name="icon" maxlength="8" class="iconin" placeholder="${pieces() ? '💍' : '👕'}"></label>
+      <label>${t('alertBelow')}<input name="threshold" type="number" inputmode="numeric" min="0" value="${pieces() ? 10 : 50}"></label></div>
+      <p class="small muted">${t('iconHelp')}</p>
       <button class="primary small">${t('addCategory')}</button></form></div>`;
   }
 
   function viewPromos() {
     if (!O.promos) return head('promotions') + loading;
     const now = new Date();
-    const list = O.promos.length ? O.promos.map((p) => {
+    const mine = O.promos.filter((p) => { const g = S.catalog.grades.find((x) => x.id === p.grade_id);
+      return !g || inBiz(S.catalog.categories.find((c) => c.id === g.category_id)); });
+    const list = mine.length ? mine.map((p) => {
       const g = S.catalog.grades.find((x) => x.id === p.grade_id);
       const running = new Date(p.starts_at) <= now;
       return `<div class="card"><div class="srow"><b>${esc(gLabel(p.grade_id))}</b>
@@ -330,6 +365,7 @@ export function createOwner(ctx) {
     if (!O.counts) return head('cashCount') + loading;
     return head('cashCount') + `<div class="card">
       <div class="srow"><span>${t('cashSalesToday')}</span><b>${kes(O.cashToday)}</b></div>
+      ${(S.businesses || []).length > 1 ? `<p class="small muted">${t('cashBoth')}</p>` : ''}
       <form class="form" data-form="cash">
         <label>${t('openingFloat')}<input type="number" inputmode="numeric" min="0" name="float" value="0"></label>
         <label>${t('counted')}<input type="number" inputmode="numeric" min="0" name="counted" required></label>
@@ -364,11 +400,11 @@ export function createOwner(ctx) {
   // ---------------- backup (CSV) ----------------
   async function exportCsv(from, to) {
     toast(t('loading'));
-    const rows = [['date', 'time', 'receipt', 'seller', 'payment', 'mpesa_code', 'status', 'price_approved',
+    const rows = [['business', 'date', 'time', 'receipt', 'seller', 'payment', 'mpesa_code', 'status', 'price_approved',
       'item', 'quantity', 'unit_price', 'line_total', 'below_lowest']];
     for (let i = 0; ; i += 1000) {
       const { data, error } = await sb.from('sales')
-        .select('id, sold_at, payment_method, mpesa_code, status, approved_by, seller:profiles!sales_sold_by_fkey(full_name), sale_lines(quantity, unit_price, grade_id, below_min)')
+        .select('id, sold_at, payment_method, mpesa_code, status, approved_by, business_id, seller:profiles!sales_sold_by_fkey(full_name), sale_lines(quantity, unit_price, grade_id, below_min)')
         .gte('sold_at', nbStart(from)).lt('sold_at', nbStart(addDays(to, 1)))
         .order('sold_at').range(i, i + 999);
       if (error) return fail(error);
@@ -377,7 +413,7 @@ export function createOwner(ctx) {
         const day = nbDate(d);
         const time = d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
         for (const l of sale.sale_lines) {
-          rows.push([day, time, sale.id.slice(0, 8).toUpperCase(), sale.seller?.full_name, sale.payment_method,
+          rows.push([(S.businesses || []).find((b) => b.id === sale.business_id)?.name || '', day, time, sale.id.slice(0, 8).toUpperCase(), sale.seller?.full_name, sale.payment_method,
             sale.mpesa_code, sale.status, sale.approved_by ? 'yes' : '', gLabel(l.grade_id), l.quantity,
             l.unit_price, l.quantity * l.unit_price, l.below_min ? 'yes' : '']);
         }
@@ -487,14 +523,14 @@ export function createOwner(ctx) {
   }
 
   function viewSettings() {
-    const st = S.settings || {};
-    return head('settings') + `<div class="card"><h2>${t('shopDetails')}</h2>
+    const b = curBiz();
+    const st = b ? { business_name: b.name, receipt_phone: b.receipt_phone, receipt_footer: b.receipt_footer } : (S.settings || {});
+    return head('settings') + `<div class="card"><h2>${t('shopDetails')}${b && (S.businesses || []).length > 1 ? ' · ' + esc(b.name) : ''}</h2>
+      ${(S.businesses || []).length > 1 ? `<p class="small muted">${t('switchHint')}</p>` : ''}
       <form class="form" data-form="shop">
         <label>${t('businessName')}<input name="business_name" value="${esc(st.business_name)}" required></label>
         <label>${t('receiptPhone')}<input name="receipt_phone" value="${esc(st.receipt_phone)}" inputmode="tel"></label>
         <label>${t('receiptFooter')}<input name="receipt_footer" value="${esc(st.receipt_footer)}"></label>
-        <label>${t('lowStockLevel')}<input name="low_stock_threshold" type="number" inputmode="numeric" min="0"
-          value="${S.stock?.threshold ?? st.low_stock_threshold ?? 50}"></label>
         <button class="primary small">${t('save')}</button>
       </form></div>
       <div class="card"><h2>${t('notifications')}</h2>${viewPush()}</div>
@@ -558,7 +594,7 @@ export function createOwner(ctx) {
           O.adding = false;
           await loadStock();
           stockCheck();                       // re-arms the alert when back above the level
-          if (isLow(S.stock)) O.justRestocked = true;
+          if (lowGroups(S.stock).length) O.justRestocked = true;
         }
         break;
       }
@@ -582,7 +618,17 @@ export function createOwner(ctx) {
         break;
       }
       case 'addcat': {
-        ({ error } = await sb.from('categories').insert({ name: String(f.get('name')).trim(), sort_order: O.cats.length + 1 }));
+        ({ error } = await sb.from('categories').insert({
+          name: String(f.get('name')).trim(), sort_order: O.cats.length + 1, business_id: S.biz,
+          icon: String(f.get('icon') || '').trim() || null,
+          low_stock_threshold: Math.max(0, num('threshold') || 0) }));
+        break;
+      }
+      case 'group': {
+        ({ error } = await sb.from('categories').update({
+          icon: String(f.get('icon') || '').trim() || null,
+          low_stock_threshold: Math.max(0, num('threshold') || 0) }).eq('id', form.dataset.cat));
+        if (!error) { await loadStock(); stockCheck(); }
         break;
       }
       case 'promo': {
@@ -602,14 +648,17 @@ export function createOwner(ctx) {
         if (!e) toast(`${t('difference')}: ${kes(data)}${data < 0 ? ' ' + t('short') : data > 0 ? ' ' + t('over') : ' ✓'}`, data < 0);
         break;
       }
-      case 'shop': {
-        ({ error } = await sb.from('settings').update({
-          business_name: String(f.get('business_name')).trim(),
+      case 'shop': {     // details of the business selected at the top
+        const row = {
+          name: String(f.get('business_name')).trim(),
           receipt_phone: String(f.get('receipt_phone') || '').trim() || null,
           receipt_footer: String(f.get('receipt_footer') || '').trim() || null,
-          low_stock_threshold: Math.max(0, num('low_stock_threshold') || 0),
-        }).eq('id', 1));
-        if (!error) { await loadCatalog(); await loadStock(); stockCheck(); }
+        };
+        ({ error } = S.biz
+          ? await sb.from('businesses').update(row).eq('id', S.biz)
+          : await sb.from('settings').update({ business_name: row.name, receipt_phone: row.receipt_phone,
+              receipt_footer: row.receipt_footer }).eq('id', 1));
+        if (!error) await loadCatalog();
         break;
       }
       case 'staff': {
@@ -628,5 +677,5 @@ export function createOwner(ctx) {
     return true;
   }
 
-  return { view, onClick, onSubmit, go, pollApprovals, loadStock, stockCheck, isLow: () => isLow(S.stock) };
+  return { view, onClick, onSubmit, go, pollApprovals, loadStock, stockCheck, lowGroups: () => lowGroups(S.stock) };
 }
