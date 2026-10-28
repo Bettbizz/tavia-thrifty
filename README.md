@@ -112,12 +112,16 @@ reorder its grades (▲ ▼) or add a grade, or tap **+ Add item**. Icons are
 picked from the name automatically (clothes or jewellery set) and can be
 changed by tapping another. Tap **✓ Done** to go back to the normal view.
 
-## Reset sales (with Undo)
+## Hidden owner tools (Settings → Advanced)
 
-Owner → Settings → Advanced → Reset sales. Deletes sales, approvals, cash
-counts and stock for one business or all, after several warnings, a tick box
-and typing RESET. **Undo** is available for 7 days; the saved copy is then
-deleted to save space. Prices, staff and settings are never touched.
+- **Edit or delete bales:** fix a bale's date, supplier, cost or pieces
+  (never below pieces already sold), or delete it.
+- **Reset sales:** deletes sales, approvals, cash counts and stock for one
+  business or all.
+
+Both deletes need a tick box, typing DELETE / RESET and a final confirmation.
+**Undo** is available for 7 days; the saved copy is then deleted to save
+space. Prices, staff and settings are never touched.
 
 ## Stock monitors
 
