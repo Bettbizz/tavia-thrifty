@@ -424,16 +424,29 @@ function renderLogin() {
 }
 
 function cartBar() {
-  if (!S.cart.length) return '';
+  if (!S.cart.length || wide()) return '';   // sideways tablet shows the cart beside the items
   return `<button class="cartbar" data-a="screen" data-v="cart">
     <span>${cartCount()} ${cartCount() === 1 ? t('item') : t('items')}</span><b>${kes(cartTotal())}</b><span>${t('pay')} →</span></button>`;
 }
 
+// Sideways tablet (wide screen): items on the left, the cart always visible on the right.
+const WIDE = window.matchMedia('(min-width: 800px)');
+const wide = () => WIDE.matches;
+WIDE.addEventListener?.('change', () => { if (S.screen === 'cart' && wide()) S.screen = 'categories'; render(); });
+
 function renderSell() {
   if (S.screen === 'waiting' && S.pendingReq) return renderWaiting();
   if (S.screen === 'done') return renderDone();
+  if (wide() && ['categories', 'grades', 'cart'].includes(S.screen) && !(S.editSell && isOwner())) {
+    const left = S.screen === 'grades' ? renderGrades() : renderSellItems();
+    return `<div class="split"><section>${left}</section><aside class="cartpanel">${renderCart(true)}</aside></div>`;
+  }
   if (S.screen === 'cart') return renderCart();
   if (S.screen === 'grades') return renderGrades();
+  return renderSellItems();
+}
+
+function renderSellItems() {
   if (S.screen === 'newgroup' && isOwner()) return renderNewGroup();
   const edit = S.editSell && isOwner() && online();
   const head = `<div class="sellhead"><h1>${edit ? t('editItems') : t('chooseCategory')}</h1>
@@ -561,9 +574,10 @@ function renderGrades() {
     ${cartBar()}`;
 }
 
-function renderCart() {
+function renderCart(panel = false) {
   if (!S.cart.length) {
-    return `<button class="link" data-a="screen" data-v="categories">← ${t('back')}</button>
+    return panel ? `<h2>🛒 ${t('cartTitle')}</h2><p class="center small">${t('tapToAdd')}</p>`
+      : `<button class="link" data-a="screen" data-v="categories">← ${t('back')}</button>
       <p class="center">${t('emptyCart')}</p>`;
   }
   const owner = isOwner();
@@ -591,9 +605,9 @@ function renderCart() {
     </div>`;
   }).join('');
 
-  return `<button class="link" data-a="screen" data-v="categories">← ${t('addMore')}</button>
+  return `${panel ? `<h2>🛒 ${t('cartTitle')}</h2>` : `<button class="link" data-a="screen" data-v="categories">← ${t('addMore')}</button>`}
     ${lines}
-    <div class="paytoggle">
+    ${panel ? '<div class="cartfoot">' : ''}<div class="paytoggle">
       <button data-a="pay" data-v="cash" class="${S.pay === 'cash' ? 'on' : ''}">💵 ${t('cash')}</button>
       <button data-a="pay" data-v="mpesa" class="${S.pay === 'mpesa' ? 'on' : ''}">📱 ${t('mpesa')}</button>
     </div>
@@ -601,7 +615,7 @@ function renderCart() {
     <div class="total"><span>${t('total')}</span><b>${kes(cartTotal())}</b></div>
     ${blocked
       ? `<button class="primary askbtn" data-a="ask" ${S.busy ? 'disabled' : ''}>🔔 ${t('askOwnerBtn')}</button>`
-      : `<button class="primary" data-a="complete">${t('complete')}</button>`}`;
+      : `<button class="primary" data-a="complete">${t('complete')}</button>`}${panel ? '</div>' : ''}`;
 }
 
 // ---------- M-Pesa: paste the confirmation message to fill the code ----------

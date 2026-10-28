@@ -109,6 +109,13 @@ Staff and logins are shared. Each business has its own cash count; Owner →
 All businesses shows what each made on a day and the total. A sale can only
 contain items from one business.
 
+## Tablets
+
+The app follows how the tablet is held. Upright: bigger tiles, 3 per row,
+same flow as phones. Sideways: items on the left and the sale (cart, Cash /
+M-Pesa, total, Complete sale) always visible on the right, so a sale is
+tap item → tap grade → Complete sale. Rotating keeps the cart.
+
 ## Adding and arranging items
 
 Owner: on the Sell screen tap ✏️. Use ◀ ▶ to reorder tiles, tap a tile to
