@@ -177,6 +177,14 @@ export function createOwner(ctx) {
           if (c.error) throw c.error;
           O.counts = c.data; O.cashToday = r.data?.cash ?? 0; break;
         }
+        case 'balesadmin': {
+          const [b, p] = await Promise.all([
+            sb.from('bales').select('*, bale_stock(id, grade_id, quantity, remaining)')
+              .eq('business_id', S.biz).order('received_on', { ascending: false }).order('created_at', { ascending: false }),
+            sb.rpc('reset_preview', { p_business: S.biz })]);
+          if (b.error) throw b.error;
+          O.adminBales = b.data; O.resetInfo = p.data || null; break;
+        }
         case 'reset': {
           const { data, error } = await sb.rpc('reset_preview', { p_business: O.resetAll ? null : S.biz });
           if (error) throw error;
@@ -199,7 +207,7 @@ export function createOwner(ctx) {
     render();
   }
 
-  function go(section) { S.justSaved = null; O.section = section; O.adding = false; O.justRestocked = false; render(); if (section !== 'menu') load(); }
+  function go(section) { S.justSaved = null; O.editBale = null; O.delBale = null; O.section = section; O.adding = false; O.justRestocked = false; render(); if (section !== 'menu') load(); }
 
   // ---------------- views ----------------
   const head = (key) => `<button class="link" data-a="o-go" data-v="menu">← ${t('back')}</button><h1>${t(key)}</h1>`;
@@ -222,6 +230,7 @@ export function createOwner(ctx) {
       case 'settings': return viewSettings();
       case 'summary': return viewSummary();
       case 'reset': return viewReset();
+      case 'balesadmin': return viewBalesAdmin();
     }
     const n = (S.approvals || []).length;
     const nLow = lowGroups(S.stock).length;
@@ -399,6 +408,67 @@ export function createOwner(ctx) {
       ${many ? `<button class="link" data-a="o-go" data-v="summary">🏪 ${t('allBusinesses')} →</button>` : ''}`;
   }
 
+  const when = (iso) => new Date(iso).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
+  function undoCard(d) {
+    if (!d?.undoable?.length) return '';
+    return `<div class="card"><h2>↩ ${t('undoTitle')}</h2>${d.undoable.map((r) => `<div class="srow">
+        <span class="small">${when(r.created_at)} · ${r.kind === 'bale'
+          ? `${t('deletedBale')}: ${esc(r.label || '')}`
+          : `${t('resetTitle')} · ${esc(r.business === 'ALL' ? t('allBusinesses') : r.business)} · ${r.counts.sales} ${t('salesWord')}`}<br>
+          <span class="muted">${t('undoUntil')} ${when(r.expires_at)}</span></span>
+        <button class="btn ok small" data-a="o-undo" data-v="${r.id}">${t('undo')}</button></div>`).join('')}</div>`;
+  }
+
+  // Edit or delete single bales / deliveries (hidden under Settings → Advanced).
+  function viewBalesAdmin() {
+    const title = pieces() ? 'manageStock' : 'manageBales';
+    let out = `<button class="link" data-a="o-go" data-v="settings">← ${t('back')}</button><h1 class="dangerh">⚠ ${t(title)}</h1>`;
+    if (!O.adminBales) return out + loading;
+    out += undoCard(O.resetInfo);
+    if (!O.adminBales.length) return out + `<p class="center">${pieces() ? t('noDeliveries') : t('noBales')}</p>`;
+    out += `<p class="small muted">${t('manageHelp')}</p>`;
+    return out + O.adminBales.map((b) => {
+      const lines = b.bale_stock || [];
+      const pcs = lines.reduce((x, l) => x + l.quantity, 0);
+      const sold = lines.reduce((x, l) => x + l.quantity - l.remaining, 0);
+      const head = `<div class="srow"><b>${fmtDay(b.received_on)}${b.supplier ? ' · ' + esc(b.supplier) : ''}</b><b>${kes(b.cost)}</b></div>
+        <div class="small muted">${pcs} ${t('pieces').toLowerCase()} · ${sold} ${t('soldWord')}${b.notes ? ' · ' + esc(b.notes) : ''}</div>`;
+      if (O.editBale === b.id) {
+        const qty = Object.fromEntries(lines.map((l) => [l.grade_id, l]));
+        return `<div class="card"><form class="form" data-form="editbale" data-id="${b.id}">
+          <label>${t('date')}<input type="date" name="date" value="${b.received_on}" required></label>
+          <label>${t('supplier')}<input name="supplier" value="${esc(b.supplier || '')}" autocomplete="off"></label>
+          <label>${pieces() ? t('stockCost') : t('baleCost')}<input name="cost" type="number" inputmode="numeric" min="0" value="${b.cost}" required></label>
+          ${activeGroups().map(({ c, gs }) => `<fieldset><legend>${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</legend>${gs.map((g) => {
+            const l = qty[g.id]; const s = l ? l.quantity - l.remaining : 0;
+            return `<label class="qrow"><span>${esc(g.name)}${s ? ` <small class="muted">(${s} ${t('soldWord')})</small>` : ''}</span>
+              <input type="number" inputmode="numeric" min="${s}" name="q_${g.id}" value="${l ? l.quantity : ''}"></label>`;
+          }).join('')}</fieldset>`).join('')}
+          <label>${t('notes')}<input name="notes" value="${esc(b.notes || '')}" autocomplete="off"></label>
+          <button class="primary">${t('save')}</button>
+          <button type="button" class="link" data-a="o-bcancel">${t('cancel')}</button>
+        </form></div>`;
+      }
+      if (O.delBale === b.id) {
+        return `<div class="card dangercard">${head}
+          <p><b>${t('deleteBaleWill')}</b></p>
+          <ul class="small"><li>${t('deleteBaleStock').replace('{n}', pcs - sold)}</li>
+            ${sold ? `<li>${t('deleteBaleSold').replace('{n}', sold)}</li>` : ''}</ul>
+          <p class="warn">${t('resetWarn2')}</p>
+          <form class="form" data-form="delbale" data-id="${b.id}" data-noarm="1">
+            <label class="check"><input type="checkbox" name="understand"> ${t('resetUnderstand')}</label>
+            <label>${t('typeDelete')}<input name="confirm" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="DELETE"></label>
+            <button class="btn bad wide">${t('deleteThis')}</button>
+            <button type="button" class="link" data-a="o-bcancel">${t('cancel')}</button>
+          </form></div>`;
+      }
+      return `<div class="card">${head}
+        <div class="small muted">${lines.map((l) => esc(gLabel(l.grade_id)) + ': ' + l.remaining + '/' + l.quantity).join(' · ')}</div>
+        <div class="two"><button class="btn plain okc" data-a="o-bedit" data-v="${b.id}">✏️ ${t('edit')}</button>
+          <button class="btn plain" data-a="o-bdel" data-v="${b.id}">🗑 ${t('delete')}</button></div></div>`;
+    }).join('');
+  }
+
   // Reset sales (hidden under Settings → Advanced). Undo possible for 7 days.
   function viewReset() {
     const d = O.resetInfo;
@@ -407,10 +477,7 @@ export function createOwner(ctx) {
     const when = (iso) => new Date(iso).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
     let out = `<button class="link" data-a="o-go" data-v="settings">← ${t('back')}</button><h1 class="dangerh">⚠ ${t('resetTitle')}</h1>`;
     if (!d) return out + loading;
-    if (d.undoable.length) out += `<div class="card"><h2>↩ ${t('undoTitle')}</h2>${d.undoable.map((r) => `<div class="srow">
-        <span class="small">${when(r.created_at)} · ${esc(r.business === 'ALL' ? t('allBusinesses') : r.business)} · ${r.counts.sales} ${t('salesWord')}<br>
-          <span class="muted">${t('undoUntil')} ${when(r.expires_at)}</span></span>
-        <button class="btn ok small" data-a="o-undo" data-v="${r.id}">${t('undo')}</button></div>`).join('')}</div>`;
+    out += undoCard(d);
     out += `<div class="card dangercard">
       ${many ? `<div class="chips"><button class="chip ${O.resetAll ? '' : 'on'}" data-a="o-rscope" data-v="one">${esc(curBiz()?.name || '')}</button>
         <button class="chip ${O.resetAll ? 'on' : ''}" data-a="o-rscope" data-v="all">${t('allBusinesses')}</button></div>` : ''}
@@ -618,6 +685,7 @@ export function createOwner(ctx) {
         <button class="primary small" data-a="o-csvall">⬇ ${t('downloadAll')}</button></div>
       <details class="advanced"><summary>${t('advanced')}</summary>
         <p class="small muted">${t('advancedHelp')}</p>
+        <button class="link danger" data-a="o-go" data-v="balesadmin">⚠ ${pieces() ? t('manageStock') : t('manageBales')}…</button><br>
         <button class="link danger" data-a="o-go" data-v="reset">⚠ ${t('resetTitle')}…</button></details>`;
   }
 
@@ -642,6 +710,9 @@ export function createOwner(ctx) {
         form?.querySelectorAll('.iconpick button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
         return true;
       }
+      case 'o-bedit': O.editBale = v; O.delBale = null; render(); return true;
+      case 'o-bdel': O.delBale = v; O.editBale = null; render(); return true;
+      case 'o-bcancel': O.editBale = null; O.delBale = null; render(); return true;
       case 'o-rscope': O.resetAll = v === 'all'; O.resetInfo = null; render(); load(); return true;
       case 'o-undo': {
         if (!confirm(t('undoConfirm'))) return true;
@@ -751,6 +822,24 @@ export function createOwner(ctx) {
         error = e;
         if (!e) toast(`${t('difference')}: ${kes(data)}${data < 0 ? ' ' + t('short') : data > 0 ? ' ' + t('over') : ' ✓'}`, data < 0);
         break;
+      }
+      case 'editbale': {
+        const lines = S.catalog.grades.filter((g) => inBiz(S.catalog.categories.find((c) => c.id === g.category_id)))
+          .map((g) => ({ grade_id: g.id, quantity: num('q_' + g.id) || 0 })).filter((l) => l.quantity > 0);
+        if (!lines.length) return toast(t('piecesPerGrade'), true);
+        if (!confirm(t('editBaleConfirm'))) return true;
+        ({ error } = await sb.rpc('update_bale', { p_id: form.dataset.id, p_received_on: f.get('date'),
+          p_supplier: f.get('supplier') || null, p_cost: num('cost'), p_notes: f.get('notes') || null, p_lines: lines }));
+        if (!error) { O.editBale = null; await loadStock(); stockCheck(); }
+        break;
+      }
+      case 'delbale': {
+        if (f.get('understand') !== 'on') return toast(t('resetTick'), true);
+        if (String(f.get('confirm') || '').trim() !== 'DELETE') return toast(t('deleteTypeExact'), true);
+        if (!confirm(t('deleteFinal'))) return true;
+        const { error: e } = await sb.rpc('delete_bale', { p_id: form.dataset.id, p_confirm: 'DELETE' });
+        if (e) { fail(e); return true; }
+        O.delBale = null; toast(t('deletedUndo')); await loadStock(); stockCheck(); await load(); return true;
       }
       case 'reset': {
         if (f.get('understand') !== 'on') return toast(t('resetTick'), true);
