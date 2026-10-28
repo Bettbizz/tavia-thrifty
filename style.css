@@ -277,6 +277,8 @@ button:active:not(:disabled), .tile:active, .grade:active, .chip:active { transf
 .bizhead { margin: 14px 0 8px; font-size: .95rem; text-transform: uppercase; letter-spacing: .6px; color: var(--brand); }
 .bizhead:first-of-type { margin-top: 4px; }
 .biztag { display: inline-block; font-size: .72rem; padding: 0 6px; border-radius: 6px; background: var(--brand-soft); color: var(--brand); font-weight: 700; }
-.bizchips { flex-wrap: wrap; }
-.bizchips .chip { min-height: 44px; font-size: .95rem; }
+/* Today: All / each business, always one row, equal widths */
+.bizchips { display: grid; gap: 6px; margin-bottom: 12px; }
+.bizchips .chip { min-height: 44px; min-width: 0; padding: 4px 6px; font-size: .82rem; line-height: 1.15;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 12px; }
 .top .brand { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 1.05rem; }

@@ -743,8 +743,8 @@ function renderToday() {
 
   return `<div class="todayhead"><h1>${t('salesToday')}</h1>
       <button class="link" data-a="refresh">↻ ${t('refresh')}</button></div>
-    ${S.businesses.length > 1 ? `<div class="chips bizchips">
-      <button class="chip ${!S.todayBiz ? 'on' : ''}" data-a="today-biz" data-v="">${t('allBusinesses')}</button>
+    ${S.businesses.length > 1 ? `<div class="bizchips" style="grid-template-columns: repeat(${S.businesses.length + 1}, 1fr)">
+      <button class="chip ${!S.todayBiz ? 'on' : ''}" data-a="today-biz" data-v="">${t('allShort')}</button>
       ${S.businesses.map((b) => `<button class="chip ${S.todayBiz === b.id ? 'on' : ''}" data-a="today-biz" data-v="${b.id}">${esc(b.name)}</button>`).join('')}
     </div>` : ''}
     <div class="stats">
