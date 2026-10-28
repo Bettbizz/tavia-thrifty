@@ -101,8 +101,23 @@ Actions → New repository secret, for each of:
 Tap the business name at the top to switch between Tavia Thrifty and the
 jewellery business. Each has its own item groups, prices, stock, sales,
 reports and receipt name (Owner → Settings edits the selected business).
-Staff, logins and the end-of-day cash count are shared. A sale can only
+Staff and logins are shared. Each business has its own cash count; Owner →
+All businesses shows what each made on a day and the total. A sale can only
 contain items from one business.
+
+## Adding and arranging items
+
+Owner: on the Sell screen tap ✏️. Use ◀ ▶ to reorder tiles, tap a tile to
+reorder its grades (▲ ▼) or add a grade, or tap **+ Add item**. Icons are
+picked from the name automatically (clothes or jewellery set) and can be
+changed by tapping another. Tap **✓ Done** to go back to the normal view.
+
+## Reset sales (with Undo)
+
+Owner → Settings → Advanced → Reset sales. Deletes sales, approvals, cash
+counts and stock for one business or all, after several warnings, a tick box
+and typing RESET. **Undo** is available for 7 days; the saved copy is then
+deleted to save space. Prices, staff and settings are never touched.
 
 ## Stock monitors
 

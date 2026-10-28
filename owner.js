@@ -1,5 +1,6 @@
 // Owner tab: approvals, reports, bales, prices, promotions, cash count, staff, settings.
 import { VAPID_PUBLIC_KEY } from './config.js';
+import { iconsFor, suggestIcon } from './icons.js';
 // Everything here also needs owner rights in the database; hiding it in the
 // app is only for convenience.
 
@@ -10,7 +11,8 @@ const fmtDay = (iso) => new Date(iso).toLocaleDateString('en-KE', { day: 'numeri
 
 const SECTIONS = [
   ['approvals', '🔔', 'approvals'], ['reports', '📊', 'reports'], ['bales', '📦', 'bales'],
-  ['prices', '🏷️', 'prices'], ['promos', '🎉', 'promotions'], ['cash', '💰', 'cashCount'], ['staff', '👥', 'staff'], ['settings', '⚙️', 'settings'],
+  ['prices', '🏷️', 'prices'], ['promos', '🎉', 'promotions'], ['cash', '💰', 'cashCount'], ['summary', '🏪', 'allBusinesses'], ['staff', '👥', 'staff'],
+  ['settings', '⚙️', 'settings'],
 ];
 const b64ToBytes = (b64) => {
   const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
@@ -63,7 +65,7 @@ export function createOwner(ctx) {
   async function loadStock() {
     if (!navigator.onLine || S.profile?.role !== 'owner' || !S.biz) return;
     const { data, error } = await sb.rpc('stock_status', { p_business: S.biz });
-    if (!error && data) { S.stock = data; render(); }
+    if (!error && data && JSON.stringify(data) !== JSON.stringify(S.stock)) { S.stock = data; render(); }
   }
   // Ask the server to alert owners if a group just dropped below its level (once per drop).
   const stockCheck = () => sb.functions.invoke('notify-owners', { body: { stock_check: true } }).catch(() => {});
@@ -168,12 +170,22 @@ export function createOwner(ctx) {
           O.promos = data; break;
         }
         case 'cash': {
-          const [c, r] = await Promise.all([
-            sb.from('cash_counts').select('*').order('count_date', { ascending: false }).limit(14),
-            sb.rpc('sales_report', { p_from: nbDate(), p_to: nbDate(), p_business: null }),
-          ]);
+          let q = sb.from('cash_counts').select('*').order('count_date', { ascending: false }).limit(14);
+          q = S.biz ? q.eq('business_id', S.biz) : q;
+          const [c, r] = await Promise.all([q,
+            sb.rpc('sales_report', { p_from: nbDate(), p_to: nbDate(), p_business: S.biz })]);
           if (c.error) throw c.error;
           O.counts = c.data; O.cashToday = r.data?.cash ?? 0; break;
+        }
+        case 'reset': {
+          const { data, error } = await sb.rpc('reset_preview', { p_business: O.resetAll ? null : S.biz });
+          if (error) throw error;
+          O.resetInfo = data; break;
+        }
+        case 'summary': {
+          const { data, error } = await sb.rpc('day_summary', { p_date: O.sumDate || nbDate() });
+          if (error) throw error;
+          O.summary = data; break;
         }
         case 'settings': await Promise.all([pushStatus(), loadStock()]); break;
         case 'staff': {
@@ -187,7 +199,7 @@ export function createOwner(ctx) {
     render();
   }
 
-  function go(section) { O.section = section; O.adding = false; O.justRestocked = false; render(); if (section !== 'menu') load(); }
+  function go(section) { S.justSaved = null; O.section = section; O.adding = false; O.justRestocked = false; render(); if (section !== 'menu') load(); }
 
   // ---------------- views ----------------
   const head = (key) => `<button class="link" data-a="o-go" data-v="menu">← ${t('back')}</button><h1>${t(key)}</h1>`;
@@ -208,10 +220,13 @@ export function createOwner(ctx) {
       case 'cash': return viewCash();
       case 'staff': return viewStaff();
       case 'settings': return viewSettings();
+      case 'summary': return viewSummary();
+      case 'reset': return viewReset();
     }
     const n = (S.approvals || []).length;
     const nLow = lowGroups(S.stock).length;
-    return monitors(S.stock) + `<div class="grid">${SECTIONS.map(([k, ic, key], i) =>
+    const sections = SECTIONS.filter(([k]) => k !== 'summary' || (S.businesses || []).length > 1);
+    return monitors(S.stock) + `<div class="grid">${sections.map(([k, ic, key], i) =>
       `<button class="tile c${i % 6} otile" data-a="o-go" data-v="${k}">
         <span class="oic">${ic}</span>${k === 'bales' && pieces() ? t('stockTile') : t(key)}${k === 'approvals' && n ? ` <span class="count">${n}</span>` : ''}${k === 'bales' && nLow ? ` <span class="count">${nLow} ${t('low')}</span>` : ''}</button>`).join('')}</div>`;
   }
@@ -307,9 +322,12 @@ export function createOwner(ctx) {
     return head('prices') + grouped(O.cats, O.grades).map(({ c, gs }) => `<div class="card">
       <h2>${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</h2>
       <form class="form grouprow" data-form="group" data-cat="${c.id}">
-        <label>${t('icon')}<input name="icon" value="${esc(c.icon || '')}" maxlength="8" class="iconin"></label>
+        <label>${t('icon')}<input type="hidden" name="icon" value="${esc(c.icon || '')}">
+          <button type="button" class="iconbtn" data-a="o-togglepick" data-v="${c.id}">${esc(c.icon || '＋')}</button></label>
         <label>${t('alertBelow')}<input name="threshold" type="number" inputmode="numeric" min="0" value="${c.low_stock_threshold ?? 50}"></label>
         <button class="primary small">${t('save')}</button>
+        <div class="iconpick small hide" id="pick-${c.id}">${iconsFor(curBiz()?.kind).map((ic) =>
+          `<button type="button" class="${ic === c.icon ? 'on' : ''}" data-a="o-picon" data-v="${c.id}|${ic}">${ic}</button>`).join('')}</div>
       </form>
       <form class="form" data-form="grades" data-cat="${c.id}">
         <div class="prow phead"><span></span><span>${t('normal')}</span><span>${t('lowest')}</span><span></span></div>
@@ -330,7 +348,7 @@ export function createOwner(ctx) {
         </form></details>
     </div>`).join('') + `<div class="card"><h2>${t('addCategory')}</h2>
       <form class="form" data-form="addcat"><label>${t('name')}<input name="name" required></label>
-      <div class="two"><label>${t('icon')}<input name="icon" maxlength="8" class="iconin" placeholder="${pieces() ? '💍' : '👕'}"></label>
+      <div class="two"><label>${t('icon')}<input name="icon" maxlength="8" class="iconin" placeholder="${t('auto')}"></label>
       <label>${t('alertBelow')}<input name="threshold" type="number" inputmode="numeric" min="0" value="${pieces() ? 10 : 50}"></label></div>
       <p class="small muted">${t('iconHelp')}</p>
       <button class="primary small">${t('addCategory')}</button></form></div>`;
@@ -363,9 +381,10 @@ export function createOwner(ctx) {
 
   function viewCash() {
     if (!O.counts) return head('cashCount') + loading;
+    const many = (S.businesses || []).length > 1;
     return head('cashCount') + `<div class="card">
+      ${many ? `<p class="small muted">${t('cashOneBiz').replace('{name}', esc(curBiz()?.name || ''))}</p>` : ''}
       <div class="srow"><span>${t('cashSalesToday')}</span><b>${kes(O.cashToday)}</b></div>
-      ${(S.businesses || []).length > 1 ? `<p class="small muted">${t('cashBoth')}</p>` : ''}
       <form class="form" data-form="cash">
         <label>${t('openingFloat')}<input type="number" inputmode="numeric" min="0" name="float" value="0"></label>
         <label>${t('counted')}<input type="number" inputmode="numeric" min="0" name="counted" required></label>
@@ -376,7 +395,65 @@ export function createOwner(ctx) {
         const d = c.counted_cash - c.expected_cash;
         return [fmtDay(c.count_date), kes(c.expected_cash), kes(c.counted_cash),
           d === 0 ? '✓' : `${money(d, true)} ${d < 0 ? t('short') : t('over')}`];
-      }))}`;
+      }))}
+      ${many ? `<button class="link" data-a="o-go" data-v="summary">🏪 ${t('allBusinesses')} →</button>` : ''}`;
+  }
+
+  // Reset sales (hidden under Settings → Advanced). Undo possible for 7 days.
+  function viewReset() {
+    const d = O.resetInfo;
+    const many = (S.businesses || []).length > 1;
+    const scopeName = O.resetAll ? t('allBusinesses') : (curBiz()?.name || '');
+    const when = (iso) => new Date(iso).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
+    let out = `<button class="link" data-a="o-go" data-v="settings">← ${t('back')}</button><h1 class="dangerh">⚠ ${t('resetTitle')}</h1>`;
+    if (!d) return out + loading;
+    if (d.undoable.length) out += `<div class="card"><h2>↩ ${t('undoTitle')}</h2>${d.undoable.map((r) => `<div class="srow">
+        <span class="small">${when(r.created_at)} · ${esc(r.business === 'ALL' ? t('allBusinesses') : r.business)} · ${r.counts.sales} ${t('salesWord')}<br>
+          <span class="muted">${t('undoUntil')} ${when(r.expires_at)}</span></span>
+        <button class="btn ok small" data-a="o-undo" data-v="${r.id}">${t('undo')}</button></div>`).join('')}</div>`;
+    out += `<div class="card dangercard">
+      ${many ? `<div class="chips"><button class="chip ${O.resetAll ? '' : 'on'}" data-a="o-rscope" data-v="one">${esc(curBiz()?.name || '')}</button>
+        <button class="chip ${O.resetAll ? 'on' : ''}" data-a="o-rscope" data-v="all">${t('allBusinesses')}</button></div>` : ''}
+      <p><b>${t('resetWillDelete').replace('{name}', esc(scopeName))}</b></p>
+      <ul class="small">
+        <li>${d.sales} ${t('salesWord')} (${kes(d.money)})</li>
+        <li>${d.bales} ${t('stockDeliveries')}</li>
+        <li>${d.cash_counts} ${t('cashCountsWord')}</li>
+        <li>${d.requests} ${t('approvalsWord')}</li>
+      </ul>
+      <p class="small">${t('resetKeeps')}</p>
+      <p class="warn">${t('resetWarn1')}</p>
+      <p class="warn">${t('resetWarn2')}</p>
+      <button class="link" data-a="o-csvall">⬇ ${t('resetBackupFirst')}</button>
+      <form class="form" data-form="reset" data-noarm="1">
+        <label class="check"><input type="checkbox" name="understand"> ${t('resetUnderstand')}</label>
+        <label>${t('resetType')}<input name="confirm" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="RESET"></label>
+        <button class="btn bad wide">${t('resetButton').replace('{name}', esc(scopeName))}</button>
+      </form></div>`;
+    return out;
+  }
+
+  // Shared page: money made by each business on a day, and the total.
+  function viewSummary() {
+    const d = O.summary;
+    const top = head('allBusinesses') + `<div class="chips">
+      <input type="date" class="chipdate" data-a="o-sumdate" value="${O.sumDate || nbDate()}" max="${nbDate()}"></div>`;
+    if (!d) return top + loading;
+    const diff = (b) => (b.counted == null ? `<span class="muted">${t('notCounted')}</span>`
+      : b.counted - b.expected === 0 ? '✓' : `${money(b.counted - b.expected, true)} ${b.counted < b.expected ? t('short') : t('over')}`);
+    return top + d.businesses.map((b) => `<div class="card">
+        <div class="srow"><b>${esc(b.name)}</b><b>${kes(b.total)}</b></div>
+        <div class="srow small"><span>${t('cash')}</span><span>${kes(b.cash)}</span></div>
+        <div class="srow small"><span>M-Pesa</span><span>${kes(b.mpesa)}</span></div>
+        <div class="srow small"><span>${t('count')}</span><span>${b.sales}</span></div>
+        <div class="srow small"><span>${t('cashCount')}</span><span>${diff(b)}</span></div>
+      </div>`).join('') + `<div class="card totalcard">
+        <div class="srow"><b>${t('bothTotal')}</b><b>${kes(d.total)}</b></div>
+        <div class="srow small"><span>${t('cash')}</span><span>${kes(d.cash)}</span></div>
+        <div class="srow small"><span>M-Pesa</span><span>${kes(d.mpesa)}</span></div>
+        <div class="srow small"><span>${t('count')}</span><span>${d.sales}</span></div>
+      </div>
+      ${d.all_counted ? '' : `<p class="small muted">${t('countEach')}</p>`}`;
   }
 
   function viewStaff() {
@@ -538,15 +615,41 @@ export function createOwner(ctx) {
         <button class="primary small" data-a="printer">🖨 ${t('printerSettings')}</button></div>
       <div class="card"><h2>${t('backup')}</h2>
         <p class="small muted">${t('backupHelp')}</p>
-        <button class="primary small" data-a="o-csvall">⬇ ${t('downloadAll')}</button></div>`;
+        <button class="primary small" data-a="o-csvall">⬇ ${t('downloadAll')}</button></div>
+      <details class="advanced"><summary>${t('advanced')}</summary>
+        <p class="small muted">${t('advancedHelp')}</p>
+        <button class="link danger" data-a="o-go" data-v="reset">⚠ ${t('resetTitle')}…</button></details>`;
   }
 
   // ---------------- clicks ----------------
+  function onChange(el) {
+    if (el.dataset.a === 'o-sumdate') { O.sumDate = el.value || nbDate(); O.summary = null; render(); load(); return true; }
+    return false;
+  }
+
   async function onClick(a, v) {
     switch (a) {
       case 'o-go': go(v); return true;
       case 'o-approvals': S.tab = 'owner'; go('approvals'); return true;
       case 'o-period': O.period = v; O.report = null; render(); load(); return true;
+      case 'o-togglepick': document.getElementById('pick-' + v)?.classList.toggle('hide'); return true;
+      case 'o-picon': {
+        const [id, ic] = v.split('|');
+        const form = document.querySelector(`form[data-form="group"][data-cat="${id}"]`);
+        const input = form?.querySelector('input[name=icon]');
+        if (input) { input.value = ic; input.dispatchEvent(new Event('input', { bubbles: true })); }
+        const shown = form?.querySelector('.iconbtn'); if (shown) shown.textContent = ic;
+        form?.querySelectorAll('.iconpick button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+        return true;
+      }
+      case 'o-rscope': O.resetAll = v === 'all'; O.resetInfo = null; render(); load(); return true;
+      case 'o-undo': {
+        if (!confirm(t('undoConfirm'))) return true;
+        const { data, error } = await sb.rpc('undo_reset', { p_id: v });
+        if (error) { fail(error); return true; }
+        toast(t('undoDone') + (data?.skipped ? ' ' + t('undoSkipped').replace('{n}', data.skipped) : ''), !!data?.skipped);
+        await loadCatalog(); await loadStock(); stockCheck(); await load(); return true;
+      }
       case 'o-add': O.adding = true; O.justRestocked = false; render(); return true;
       case 'o-csv': { const [f, to] = periodRange(O.period); await exportCsv(f, to); return true; }
       case 'o-csvall': await exportCsv('2020-01-01', nbDate()); return true;
@@ -620,7 +723,7 @@ export function createOwner(ctx) {
       case 'addcat': {
         ({ error } = await sb.from('categories').insert({
           name: String(f.get('name')).trim(), sort_order: O.cats.length + 1, business_id: S.biz,
-          icon: String(f.get('icon') || '').trim() || null,
+          icon: String(f.get('icon') || '').trim() || suggestIcon(String(f.get('name')), curBiz()?.kind),
           low_stock_threshold: Math.max(0, num('threshold') || 0) }));
         break;
       }
@@ -642,11 +745,22 @@ export function createOwner(ctx) {
         break;
       }
       case 'cash': {
-        const { data, error: e } = await sb.rpc('close_day', {
-          p_date: nbDate(), p_opening_float: num('float') || 0, p_counted: num('counted'), p_notes: f.get('notes') || null });
+        const { data, error: e } = await sb.rpc('close_day_business', {
+          p_date: nbDate(), p_opening_float: num('float') || 0, p_counted: num('counted'), p_notes: f.get('notes') || null,
+          p_business: S.biz });
         error = e;
         if (!e) toast(`${t('difference')}: ${kes(data)}${data < 0 ? ' ' + t('short') : data > 0 ? ' ' + t('over') : ' ✓'}`, data < 0);
         break;
+      }
+      case 'reset': {
+        if (f.get('understand') !== 'on') return toast(t('resetTick'), true);
+        if (String(f.get('confirm') || '').trim() !== 'RESET') return toast(t('resetTypeExact'), true);
+        const name = O.resetAll ? t('allBusinesses') : (curBiz()?.name || '');
+        if (!confirm(t('resetFinal').replace('{name}', name))) return true;
+        const { data, error: e } = await sb.rpc('reset_sales', { p_business: O.resetAll ? null : S.biz, p_confirm: 'RESET' });
+        if (e) { fail(e); return true; }
+        toast(t('resetDone').replace('{n}', data.counts.sales));
+        S.today = null; await loadStock(); await load(); return true;
       }
       case 'shop': {     // details of the business selected at the top
         const row = {
@@ -671,11 +785,14 @@ export function createOwner(ctx) {
       default: return false;
     }
     if (error) fail(error);
-    else if (form.dataset.form !== 'cash') toast(t('saved'));
+    else {
+      S.justSaved = (form.dataset.form || form.id) + ':' + (form.dataset.cat || form.dataset.id || '');
+      if (form.dataset.form !== 'cash') toast(t('saved'));
+    }
     if (['grades', 'addgrade', 'addcat', 'promo'].includes(form.dataset.form)) await loadCatalog();
     await load();
     return true;
   }
 
-  return { view, onClick, onSubmit, go, pollApprovals, loadStock, stockCheck, lowGroups: () => lowGroups(S.stock) };
+  return { view, onClick, onChange, onSubmit, go, pollApprovals, loadStock, stockCheck, lowGroups: () => lowGroups(S.stock), load };
 }

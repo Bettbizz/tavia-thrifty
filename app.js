@@ -4,6 +4,7 @@ import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
 import { createOwner } from './owner.js';
 import { parseMessages, chooseCode } from './mpesa.js';
+import { iconsFor, suggestIcon } from './icons.js';
 import { printReceipt, getPrefs, setPrefs, connectPrinter, printerName, bluetoothSupported } from './printer.js';
 
 const app = document.getElementById('app');
@@ -169,7 +170,11 @@ async function sync() {
 function toast(msg, bad = false) {
   S.toast = msg; S.toastBad = bad;
   const id = (S.toastId = (S.toastId || 0) + 1);
-  render();
+  // Show the message without redrawing the screen, so typed values and ticks are kept.
+  let el = document.querySelector('.toast');
+  if (!el) { el = document.createElement('div'); app.appendChild(el); }
+  el.className = 'toast' + (bad ? ' bad' : '');
+  el.textContent = msg;
   setTimeout(() => {
     if (S.toastId !== id) return;          // a newer message is showing
     S.toast = null; document.querySelector('.toast')?.remove();
@@ -183,6 +188,7 @@ function addGrade(id) {
   if (line) line.quantity++;
   else S.cart.push({ grade_id: id, quantity: 1, unit_price: priceInfo(g).price });
   S.screen = 'categories';
+  render();
   toast(`${t('added')}: ${gradeLabel(g)}`);
 }
 
@@ -307,7 +313,50 @@ function render() {
   }
   if (S.tab === 'owner' && p.role !== 'owner') S.tab = 'sell';
   app.innerHTML = shell(S.tab === 'sell' ? renderSell() : S.tab === 'owner' ? owner.view() : renderToday());
+  armForms();
 }
+
+// ---------- save buttons: grey until something changes ----------
+const formKey = (f) => (f.dataset.form || f.id) + ':' + (f.dataset.cat || f.dataset.id || '');
+const formState = (f) => new URLSearchParams(new FormData(f)).toString();
+function updateSaveButton(f) {
+  const btn = f.querySelector('button:not([type=button])');
+  if (!btn || f.dataset.initial == null) return;
+  const dirty = formState(f) !== f.dataset.initial || f.id === 'newgroup' && !!S.ng?.name;
+  btn.disabled = !dirty;
+  btn.innerHTML = !dirty && S.justSaved === formKey(f) ? `✓ ${t('saved')}` : btn.dataset.label;
+}
+function armForms() {
+  app.querySelectorAll('form[data-form]:not([data-noarm]), form[data-save]').forEach((f) => {
+    const btn = f.querySelector('button:not([type=button])');
+    if (!btn) return;
+    btn.dataset.label = btn.innerHTML;
+    f.dataset.initial = formState(f);
+    updateSaveButton(f);
+  });
+}
+app.addEventListener('input', (e) => { const f = e.target.closest('form[data-initial]'); if (f) updateSaveButton(f); }, true);
+app.addEventListener('change', (e) => { const f = e.target.closest('form[data-initial]'); if (f) updateSaveButton(f); }, true);
+
+// ---------- every press shows a ripple (and a tiny vibration on Android) ----------
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest('button, .tile, .grade, .chip, summary, [data-a]');
+  if (!el || el.disabled || el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') return;
+  const r = el.getBoundingClientRect();
+  const size = Math.max(r.width, r.height) * 1.6;
+  const dot = document.createElement('span');
+  dot.className = 'ripple';
+  Object.assign(dot.style, { width: size + 'px', height: size + 'px',
+    left: e.clientX - size / 2 + 'px', top: e.clientY - size / 2 + 'px' });
+  const clip = document.createElement('span');
+  clip.className = 'rippleclip';
+  Object.assign(clip.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px',
+    borderRadius: getComputedStyle(el).borderRadius });
+  dot.style.left = e.clientX - r.left - size / 2 + 'px'; dot.style.top = e.clientY - r.top - size / 2 + 'px';
+  clip.appendChild(dot); document.body.appendChild(clip);
+  setTimeout(() => clip.remove(), 500);
+  try { navigator.vibrate?.(8); } catch { /* not supported */ }
+}, { passive: true });
 
 function shell(body) {
   const waiting = S.queue.filter((s) => !s.error).length;
@@ -375,25 +424,123 @@ function renderSell() {
   if (S.screen === 'done') return renderDone();
   if (S.screen === 'cart') return renderCart();
   if (S.screen === 'grades') return renderGrades();
+  if (S.screen === 'newgroup' && isOwner()) return renderNewGroup();
   const cats = S.catalog.categories.filter(inBiz);
-  if (!cats.length) return `<p class="center">${t('noCatalog')}</p>`;
-  return `<h1>${t('chooseCategory')}</h1>
-    <div class="grid">${cats.map((c, i) =>
-      `<button class="tile c${i % 6}" data-a="cat" data-v="${c.id}">${c.icon ? `<span class="ticon">${esc(c.icon)}</span>` : ''}<span>${esc(c.name)}</span></button>`).join('')}</div>
+  const edit = S.editSell && isOwner() && online();
+  const head = `<div class="sellhead"><h1>${edit ? t('editItems') : t('chooseCategory')}</h1>
+    ${isOwner() ? `<button class="editbtn ${edit ? 'on' : ''}" data-a="sell-edit">${edit ? '✓ ' + t('done') : '✏️'}</button>` : ''}</div>
+    ${edit ? `<p class="small muted">${t('editItemsHelp')}</p>` : ''}`;
+  if (!cats.length && !edit) return head + `<p class="center">${t('noCatalog')}</p>`;
+  return head + `<div class="grid">${cats.map((c, i) =>
+      `<div class="tilewrap"><button class="tile c${i % 6}" data-a="cat" data-v="${c.id}">${c.icon ? `<span class="ticon">${esc(c.icon)}</span>` : ''}<span>${esc(c.name)}</span></button>
+      ${edit ? `<div class="mover">
+        <button data-a="move-cat" data-v="${c.id}:-1" ${i === 0 ? 'disabled' : ''} aria-label="${t('moveEarlier')}">◀</button>
+        <button data-a="move-cat" data-v="${c.id}:1" ${i === cats.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▶</button></div>` : ''}</div>`).join('')}
+      ${edit ? `<button class="tile addtile" data-a="new-group"><span class="ticon">＋</span><span>${t('addItem')}</span></button>` : ''}</div>
     ${cartBar()}`;
+}
+
+// ---------- owner: add a new item group straight from the Sell screen ----------
+function newGroupDraft() {
+  const pieces = curBiz()?.kind === 'pieces';
+  const names = pieces ? [''] : ['1st Cam', '2nd Cam', '3rd Cam'];
+  return { name: '', icon: '', picked: false, level: pieces ? 10 : 50,
+    grades: names.map((n) => ({ name: n, normal: '', lowest: '' })) };
+}
+function iconPicker(selected, action) {
+  return `<div class="iconpick">${iconsFor(curBiz()?.kind).map((ic) =>
+    `<button type="button" class="${ic === selected ? 'on' : ''}" data-a="${action}" data-v="${ic}">${ic}</button>`).join('')}</div>`;
+}
+function renderNewGroup() {
+  const d = S.ng || (S.ng = newGroupDraft());
+  const icon = d.picked ? d.icon : suggestIcon(d.name, curBiz()?.kind);
+  return `<button class="link" data-a="ng-cancel">← ${t('back')}</button>
+    <h1>${t('addItem')}</h1>
+    <form class="form" id="newgroup" data-save="1">
+      <div class="nghead"><span class="ngicon">${esc(icon)}</span>
+        <label>${t('name')}<input name="name" data-ng="name" required value="${esc(d.name)}" placeholder="${curBiz()?.kind === 'pieces' ? 'Earrings' : 'Dresses'}"></label></div>
+      <p class="small muted">${t('iconAuto')}</p>
+      ${iconPicker(icon, 'ng-icon')}
+      <h2>${t('grades')}</h2>
+      <div class="prow phead"><span>${t('name')}</span><span>${t('normal')}</span><span>${t('lowest')}</span><span></span></div>
+      ${d.grades.map((g, i) => `<div class="prow">
+        <input data-ng="g${i}.name" value="${esc(g.name)}" placeholder="${t('gradeName')}">
+        <input type="number" inputmode="numeric" min="1" data-ng="g${i}.normal" value="${esc(g.normal)}">
+        <input type="number" inputmode="numeric" min="1" data-ng="g${i}.lowest" value="${esc(g.lowest)}">
+        <button type="button" class="link small" data-a="ng-rmgrade" data-v="${i}" ${d.grades.length < 2 ? 'disabled' : ''}>✕</button></div>`).join('')}
+      <button type="button" class="link" data-a="ng-addgrade">+ ${t('anotherGrade')}</button>
+      <label>${t('alertBelow')}<input type="number" inputmode="numeric" min="0" data-ng="level" value="${esc(d.level)}"></label>
+      <button class="primary">${t('save')}</button>
+    </form>`;
+}
+async function saveNewGroup() {
+  const d = S.ng;
+  const name = d.name.trim();
+  const grades = d.grades.map((g) => ({ name: g.name.trim(), normal: Math.round(+g.normal), lowest: Math.round(+g.lowest || +g.normal) }))
+    .filter((g) => g.name && g.normal > 0);
+  if (!name || !grades.length) return toast(t('needNameGrade'), true);
+  if (grades.some((g) => g.lowest > g.normal)) return toast(t('lowestTooHigh'), true);
+  const cats = S.catalog.categories.filter(inBiz);
+  const { data: cat, error } = await sb.from('categories').insert({
+    name, business_id: S.biz, icon: d.picked ? d.icon : suggestIcon(name, curBiz()?.kind),
+    low_stock_threshold: Math.max(0, Math.round(+d.level || 0)),
+    sort_order: Math.max(0, ...cats.map((c) => c.sort_order || 0)) + 1,
+  }).select('id').single();
+  if (error) return toast(error.message, true);
+  const { error: e2 } = await sb.from('grades').insert(grades.map((g, i) => ({
+    category_id: cat.id, name: g.name, normal_price: g.normal, min_price: g.lowest, sort_order: i + 1 })));
+  if (e2) return toast(e2.message, true);
+  S.ng = null; S.screen = 'categories';
+  await loadCatalog(); owner.loadStock();
+  toast(`${t('saved')}: ${name}`);
+  render();
+}
+async function addGradeHere(form) {
+  const f = new FormData(form);
+  const normal = Math.round(+f.get('normal')), lowest = Math.round(+f.get('lowest') || normal);
+  if (!(normal > 0) || lowest > normal) return toast(t('lowestTooHigh'), true);
+  const gs = S.catalog.grades.filter((g) => g.category_id === S.categoryId);
+  const { error } = await sb.from('grades').insert({ category_id: S.categoryId, name: String(f.get('name')).trim(),
+    normal_price: normal, min_price: lowest, sort_order: Math.max(0, ...gs.map((g) => g.sort_order || 0)) + 1 });
+  if (error) return toast(error.message, true);
+  await loadCatalog(); toast(t('saved')); render();
+}
+// Move a tile/grade one place earlier (-1) or later (+1) and save the new order.
+async function moveItem(table, list, id, dir) {
+  const i = list.findIndex((x) => x.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  const changed = [];
+  list.forEach((x, k) => { if (x.sort_order !== k + 1) { x.sort_order = k + 1; changed.push(x); } });
+  const all = table === 'categories' ? S.catalog.categories : S.catalog.grades;
+  all.sort((p, q) => (p.sort_order || 0) - (q.sort_order || 0) || String(p.name).localeCompare(q.name));
+  store.set('catalog', S.catalog);
+  render();
+  const res = await Promise.all(changed.map((x) => sb.from(table).update({ sort_order: x.sort_order }).eq('id', x.id)));
+  if (res.some((r) => r.error)) { toast(res.find((r) => r.error).error.message, true); await loadCatalog(); render(); }
 }
 
 function renderGrades() {
   const cat = category(S.categoryId);
   const gs = S.catalog.grades.filter((g) => g.category_id === S.categoryId);
+  const edit = S.editSell && isOwner() && online();
   return `<button class="link" data-a="screen" data-v="categories">← ${t('back')}</button>
-    <h1>${cat?.icon ? esc(cat.icon) + ' ' : ''}${esc(cat?.name)}</h1><p class="sub">${t('chooseGrade')}</p>
-    <div class="list">${gs.map((g) => {
+    <h1>${cat?.icon ? esc(cat.icon) + ' ' : ''}${esc(cat?.name)}</h1><p class="sub">${edit ? t('editGradesHelp') : t('chooseGrade')}</p>
+    <div class="list">${gs.map((g, i) => {
       const pi = priceInfo(g);
-      return `<button class="grade" data-a="add" data-v="${g.id}">
+      return `<div class="graderow"><button class="grade" data-a="add" data-v="${g.id}">
         <span>${esc(g.name)}</span>
-        <b>${pi.promo ? `<s>${kes(g.normal_price)}</s> <em>${t('promo')}</em> ` : ''}${kes(pi.price)}</b></button>`;
+        <b>${pi.promo ? `<s>${kes(g.normal_price)}</s> <em>${t('promo')}</em> ` : ''}${kes(pi.price)}</b></button>
+        ${edit ? `<div class="mover vert">
+          <button data-a="move-grade" data-v="${g.id}:-1" ${i === 0 ? 'disabled' : ''} aria-label="${t('moveEarlier')}">▲</button>
+          <button data-a="move-grade" data-v="${g.id}:1" ${i === gs.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▼</button></div>` : ''}</div>`;
     }).join('')}</div>
+    ${edit ? `<form class="form card" id="newgrade" data-save="1">
+      <h2>${t('addGrade')}</h2>
+      <label>${t('name')}<input name="name" required placeholder="${curBiz()?.kind === 'pieces' ? 'Silver' : '4th Cam'}"></label>
+      <div class="two"><label>${t('normal')}<input type="number" inputmode="numeric" min="1" name="normal" required></label>
+      <label>${t('lowest')}<input type="number" inputmode="numeric" min="1" name="lowest"></label></div>
+      <button class="primary small">${t('addGrade')}</button></form>` : ''}
     ${cartBar()}`;
 }
 
@@ -522,7 +669,7 @@ function renderPrinter() {
   const bt = bluetoothSupported();
   return `<button class="link" data-a="printer-close">← ${t('back')}</button>
     <h1>${t('printerSettings')}</h1>
-    <form class="form card" id="printerform">
+    <form class="form card" id="printerform" data-save="1">
       <label>${t('printerMode')}<select name="mode">
         <option value="system" ${p.mode === 'system' ? 'selected' : ''}>${t('modeSystem')}</option>
         <option value="bluetooth" ${p.mode === 'bluetooth' ? 'selected' : ''} ${bt ? '' : 'disabled'}>${t('modeBluetooth')}</option>
@@ -598,7 +745,7 @@ app.addEventListener('click', async (e) => {
     case 'lang': setLang(getLang() === 'en' ? 'sw' : 'en'); render(); break;
     case 'tab':  // a bottom tab always opens the start of its section
       S.tab = v; S.printerView = false;
-      if (v === 'sell' && S.screen !== 'waiting') S.screen = 'categories';
+      if (v === 'sell' && S.screen !== 'waiting') { S.screen = 'categories'; S.ng = null; }
       if (v === 'owner') S.o.section = 'menu';
       render();
       if (v === 'today') { await loadToday(); render(); }
@@ -625,6 +772,22 @@ app.addEventListener('click', async (e) => {
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
     case 'ask': await askOwner(); break;
+    case 'sell-edit':
+      if (!online()) { toast(t('needsInternet'), true); break; }
+      S.editSell = !S.editSell; S.screen = 'categories'; render(); break;
+    case 'new-group': S.ng = newGroupDraft(); S.screen = 'newgroup'; render(); break;
+    case 'ng-cancel': S.ng = null; S.screen = 'categories'; render(); break;
+    case 'ng-icon': S.ng.icon = v; S.ng.picked = true; render(); break;
+    case 'ng-addgrade': S.ng.grades.push({ name: '', normal: '', lowest: '' }); render(); break;
+    case 'ng-rmgrade': S.ng.grades.splice(+v, 1); render(); break;
+    case 'move-cat': {
+      const [id, dir] = v.split(':');
+      await moveItem('categories', S.catalog.categories.filter(inBiz), id, +dir); break;
+    }
+    case 'move-grade': {
+      const [id, dir] = v.split(':');
+      await moveItem('grades', S.catalog.grades.filter((g) => g.category_id === S.categoryId), id, +dir); break;
+    }
     case 'biz': {
       if (S.cart.length || S.screen === 'waiting') { toast(t('finishSaleFirst'), true); break; }
       const i = S.businesses.findIndex((b) => b.id === S.biz);
@@ -661,6 +824,7 @@ app.addEventListener('click', async (e) => {
 });
 
 app.addEventListener('change', (e) => {
+  if (owner.onChange(e.target)) return;
   if (e.target.dataset.a !== 'price') return;
   const line = S.cart[+e.target.dataset.v];
   const n = Math.round(Number(e.target.value));
@@ -671,17 +835,29 @@ app.addEventListener('change', (e) => {
 app.addEventListener('input', (e) => {
   if (e.target.dataset.a === 'mpesa') { S.mpesa = e.target.value; if (S.mpInfo && S.mpInfo.code !== S.mpesa.trim().toUpperCase()) S.mpInfo = null; }
   if (e.target.dataset.a === 'mp-buyer') S.mpBuyer = e.target.value;
+  const ng = e.target.dataset.ng;
+  if (ng && S.ng) {
+    const m = ng.match(/^g(\d+)\.(\w+)$/);
+    if (m) S.ng.grades[+m[1]][m[2]] = e.target.value; else S.ng[ng] = e.target.value;
+    if (ng === 'name' && !S.ng.picked) {     // live icon suggestion while typing the name
+      const ic = suggestIcon(e.target.value, curBiz()?.kind);
+      const el = document.querySelector('.ngicon'); if (el) el.textContent = ic;
+      document.querySelectorAll('.iconpick button').forEach((b) => b.classList.toggle('on', b.dataset.v === ic));
+    }
+  }
   if (e.target.dataset.a === 'mp-text') S.mpText = e.target.value;
 });
 
 app.addEventListener('submit', async (e) => {
   if (e.target.dataset.form) { e.preventDefault(); return owner.onSubmit(e.target); }
   if (e.target.id === 'signup') { e.preventDefault(); return signup(e.target); }
+  if (e.target.id === 'newgroup') { e.preventDefault(); return saveNewGroup(); }
+  if (e.target.id === 'newgrade') { e.preventDefault(); return addGradeHere(e.target); }
   if (e.target.id === 'printerform') {
     e.preventDefault();
     const f = new FormData(e.target);
     setPrefs({ mode: f.get('mode'), paper: Number(f.get('paper')), auto: f.get('auto') === 'on' });
-    toast(t('saved')); return;
+    S.justSaved = formKey(e.target); toast(t('saved')); return;
   }
   if (e.target.id !== 'login') return;
   e.preventDefault();
