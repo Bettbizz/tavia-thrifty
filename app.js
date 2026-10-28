@@ -426,7 +426,7 @@ function renderLogin() {
 function cartBar() {
   if (!S.cart.length) return '';
   return `<button class="cartbar" data-a="screen" data-v="cart">
-    <span>${cartCount()} ${t('items')}</span><b>${kes(cartTotal())}</b><span>${t('pay')} →</span></button>`;
+    <span>${cartCount()} ${cartCount() === 1 ? t('item') : t('items')}</span><b>${kes(cartTotal())}</b><span>${t('pay')} →</span></button>`;
 }
 
 function renderSell() {
