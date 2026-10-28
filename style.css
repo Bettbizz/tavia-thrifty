@@ -273,3 +273,10 @@ button:active:not(:disabled), .tile:active, .grade:active, .chip:active { transf
 .dangercard { border-color: var(--bad); }
 .btn.wide { width: 100%; }
 .btn.small { min-height: 40px; padding: 0 14px; font-size: .95rem; }
+
+.bizhead { margin: 14px 0 8px; font-size: .95rem; text-transform: uppercase; letter-spacing: .6px; color: var(--brand); }
+.bizhead:first-of-type { margin-top: 4px; }
+.biztag { display: inline-block; font-size: .72rem; padding: 0 6px; border-radius: 6px; background: var(--brand-soft); color: var(--brand); font-weight: 700; }
+.bizchips { flex-wrap: wrap; }
+.bizchips .chip { min-height: 44px; font-size: .95rem; }
+.top .brand { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 1.05rem; }

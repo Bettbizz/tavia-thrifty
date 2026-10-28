@@ -271,12 +271,21 @@ async function cancelRequest() {
   }
 }
 
+// Receipt header: one business, or both names for a mixed checkout.
+function receiptShop(sale) {
+  const ids = sale.business_id ? [sale.business_id]
+    : [...new Set((sale.lines || sale.sale_lines || []).map((l) => category(grade(l.grade_id)?.category_id)?.business_id).filter(Boolean))];
+  const shops = ids.map(shopFor);
+  if (shops.length < 2) return shops[0] || shopFor(null);
+  return { ...shops[0], business_name: shops.map((x) => x.business_name).join(' & ') };
+}
+
 async function doPrint(sale, seller) {
   try {
     await printReceipt({
       ...sale, seller,
       lines: (sale.lines || sale.sale_lines).map((l) => ({ ...l, label: gradeLabel(grade(l.grade_id)) })),
-    }, shopFor(sale.business_id || bizOfLines(sale.lines || sale.sale_lines)));
+    }, receiptShop(sale));
   } catch (e) {
     if (e?.name !== 'NotFoundError') toast(`${t('printFailed')}: ${e?.message || ''}`, true);  // NotFoundError = picker closed
   }
@@ -372,8 +381,9 @@ function shell(body) {
     ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
   return `
     <header class="top">
-      ${S.businesses.length > 1
+      ${S.businesses.length > 1 && isOwner()
         ? `<button class="brand bizswitch" data-a="biz">${esc(shopName())} <span>⇄</span></button>`
+        : S.businesses.length > 1 ? `<div class="brand">${S.businesses.map((b) => esc(b.name)).join(' & ')}</div>`
         : `<div class="brand">${esc(shopName())}</div>`}
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
@@ -425,40 +435,47 @@ function renderSell() {
   if (S.screen === 'cart') return renderCart();
   if (S.screen === 'grades') return renderGrades();
   if (S.screen === 'newgroup' && isOwner()) return renderNewGroup();
-  const cats = S.catalog.categories.filter(inBiz);
   const edit = S.editSell && isOwner() && online();
   const head = `<div class="sellhead"><h1>${edit ? t('editItems') : t('chooseCategory')}</h1>
     ${isOwner() ? `<button class="editbtn ${edit ? 'on' : ''}" data-a="sell-edit">${edit ? '✓ ' + t('done') : '✏️'}</button>` : ''}</div>
     ${edit ? `<p class="small muted">${t('editItemsHelp')}</p>` : ''}`;
-  if (!cats.length && !edit) return head + `<p class="center">${t('noCatalog')}</p>`;
-  return head + `<div class="grid">${cats.map((c, i) =>
-      `<div class="tilewrap"><button class="tile c${i % 6}" data-a="cat" data-v="${c.id}">${c.icon ? `<span class="ticon">${esc(c.icon)}</span>` : ''}<span>${esc(c.name)}</span></button>
+  // All businesses on one page (staff never switch), one heading per business.
+  const bizList = S.businesses.length ? S.businesses : [{ id: null, name: '' }];
+  const sections = bizList.map((b) => ({ b, cats: S.catalog.categories.filter((c) => !b.id || c.business_id === b.id) }))
+    .filter((x) => x.cats.length || edit);
+  if (!sections.some((x) => x.cats.length) && !edit) return head + `<p class="center">${t('noCatalog')}</p>`;
+  let n = 0;
+  return head + sections.map(({ b, cats }) => `
+    ${bizList.length > 1 ? `<h2 class="bizhead">${esc(b.name)}</h2>` : ''}
+    <div class="grid">${cats.map((c, i) =>
+      `<div class="tilewrap"><button class="tile c${n++ % 6}" data-a="cat" data-v="${c.id}">${c.icon ? `<span class="ticon">${esc(c.icon)}</span>` : ''}<span>${esc(c.name)}</span></button>
       ${edit ? `<div class="mover">
         <button data-a="move-cat" data-v="${c.id}:-1" ${i === 0 ? 'disabled' : ''} aria-label="${t('moveEarlier')}">◀</button>
         <button data-a="move-cat" data-v="${c.id}:1" ${i === cats.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▶</button></div>` : ''}</div>`).join('')}
-      ${edit ? `<button class="tile addtile" data-a="new-group"><span class="ticon">＋</span><span>${t('addItem')}</span></button>` : ''}</div>
-    ${cartBar()}`;
+      ${edit ? `<button class="tile addtile" data-a="new-group" data-v="${b.id || ''}"><span class="ticon">＋</span><span>${t('addItem')}</span></button>` : ''}</div>`).join('')
+    + cartBar();
 }
 
 // ---------- owner: add a new item group straight from the Sell screen ----------
-function newGroupDraft() {
-  const pieces = curBiz()?.kind === 'pieces';
+const ngBiz = () => bizById(S.ng?.biz) || curBiz();
+function newGroupDraft(bizId) {
+  const pieces = (bizById(bizId) || curBiz())?.kind === 'pieces';
   const names = pieces ? [''] : ['1st Cam', '2nd Cam', '3rd Cam'];
-  return { name: '', icon: '', picked: false, level: pieces ? 10 : 50,
+  return { biz: bizId || S.biz, name: '', icon: '', picked: false, level: pieces ? 10 : 50,
     grades: names.map((n) => ({ name: n, normal: '', lowest: '' })) };
 }
 function iconPicker(selected, action) {
-  return `<div class="iconpick">${iconsFor(curBiz()?.kind).map((ic) =>
+  return `<div class="iconpick">${iconsFor(ngBiz()?.kind).map((ic) =>
     `<button type="button" class="${ic === selected ? 'on' : ''}" data-a="${action}" data-v="${ic}">${ic}</button>`).join('')}</div>`;
 }
 function renderNewGroup() {
   const d = S.ng || (S.ng = newGroupDraft());
-  const icon = d.picked ? d.icon : suggestIcon(d.name, curBiz()?.kind);
+  const icon = d.picked ? d.icon : suggestIcon(d.name, ngBiz()?.kind);
   return `<button class="link" data-a="ng-cancel">← ${t('back')}</button>
-    <h1>${t('addItem')}</h1>
+    <h1>${t('addItem')}${S.businesses.length > 1 ? ` <small class="muted">· ${esc(ngBiz()?.name || '')}</small>` : ''}</h1>
     <form class="form" id="newgroup" data-save="1">
       <div class="nghead"><span class="ngicon">${esc(icon)}</span>
-        <label>${t('name')}<input name="name" data-ng="name" required value="${esc(d.name)}" placeholder="${curBiz()?.kind === 'pieces' ? 'Earrings' : 'Dresses'}"></label></div>
+        <label>${t('name')}<input name="name" data-ng="name" required value="${esc(d.name)}" placeholder="${ngBiz()?.kind === 'pieces' ? 'Earrings' : 'Dresses'}"></label></div>
       <p class="small muted">${t('iconAuto')}</p>
       ${iconPicker(icon, 'ng-icon')}
       <h2>${t('grades')}</h2>
@@ -480,9 +497,9 @@ async function saveNewGroup() {
     .filter((g) => g.name && g.normal > 0);
   if (!name || !grades.length) return toast(t('needNameGrade'), true);
   if (grades.some((g) => g.lowest > g.normal)) return toast(t('lowestTooHigh'), true);
-  const cats = S.catalog.categories.filter(inBiz);
+  const cats = S.catalog.categories.filter((c) => c.business_id === d.biz);
   const { data: cat, error } = await sb.from('categories').insert({
-    name, business_id: S.biz, icon: d.picked ? d.icon : suggestIcon(name, curBiz()?.kind),
+    name, business_id: d.biz, icon: d.picked ? d.icon : suggestIcon(name, ngBiz()?.kind),
     low_stock_threshold: Math.max(0, Math.round(+d.level || 0)),
     sort_order: Math.max(0, ...cats.map((c) => c.sort_order || 0)) + 1,
   }).select('id').single();
@@ -537,7 +554,7 @@ function renderGrades() {
     }).join('')}</div>
     ${edit ? `<form class="form card" id="newgrade" data-save="1">
       <h2>${t('addGrade')}</h2>
-      <label>${t('name')}<input name="name" required placeholder="${curBiz()?.kind === 'pieces' ? 'Silver' : '4th Cam'}"></label>
+      <label>${t('name')}<input name="name" required placeholder="${bizById(category(S.categoryId)?.business_id)?.kind === 'pieces' ? 'Silver' : '4th Cam'}"></label>
       <div class="two"><label>${t('normal')}<input type="number" inputmode="numeric" min="1" name="normal" required></label>
       <label>${t('lowest')}<input type="number" inputmode="numeric" min="1" name="lowest"></label></div>
       <button class="primary small">${t('addGrade')}</button></form>` : ''}
@@ -690,7 +707,10 @@ function renderToday() {
   if (S.printerView) return renderPrinter();
   const uid = S.session.user.id;
   // Today shows the business selected at the top (cash counts cover both).
-  const mineBiz = (s) => !S.biz || (s.business_id || bizOfLines(s.lines || s.sale_lines)) === S.biz;
+  // One tap filter: All businesses (default) / each business.
+  const bizOf = (s) => s.business_id || bizOfLines(s.lines || s.sale_lines);
+  const mineBiz = (s) => !S.todayBiz || bizOf(s) === S.todayBiz
+    || (!s.business_id && (s.lines || []).some((l) => category(grade(l.grade_id)?.category_id)?.business_id === S.todayBiz));
   const local = S.queue.filter((s) => (s.user_id === uid || isOwner()) && mineBiz(s));
   const server = (S.today || []).filter(mineBiz);
   const done = server.filter((s) => s.status === 'completed');
@@ -709,7 +729,7 @@ function renderToday() {
   </div>`).join('');
 
   const serverRows = server.map((s) => `<div class="sale ${s.status === 'voided' ? 'voided' : ''}">
-    <div class="srow"><span>${timeOf(s.sold_at)}${isOwner() ? ` · ${esc(s.seller?.full_name)}` : ''}</span>
+    <div class="srow"><span>${timeOf(s.sold_at)}${isOwner() ? ` · ${esc(s.seller?.full_name)}` : ''}${S.businesses.length > 1 && bizById(s.business_id) ? ` <span class="biztag">${esc(bizById(s.business_id).name)}</span>` : ''}</span>
       <b>${kes(s.total)}</b></div>
     <div class="sitems">${items(s.sale_lines)}</div>
     <div class="srow small">
@@ -723,6 +743,10 @@ function renderToday() {
 
   return `<div class="todayhead"><h1>${t('salesToday')}</h1>
       <button class="link" data-a="refresh">↻ ${t('refresh')}</button></div>
+    ${S.businesses.length > 1 ? `<div class="chips bizchips">
+      <button class="chip ${!S.todayBiz ? 'on' : ''}" data-a="today-biz" data-v="">${t('allBusinesses')}</button>
+      ${S.businesses.map((b) => `<button class="chip ${S.todayBiz === b.id ? 'on' : ''}" data-a="today-biz" data-v="${b.id}">${esc(b.name)}</button>`).join('')}
+    </div>` : ''}
     <div class="stats">
       <div><small>${t('count')}</small><b>${all.length}</b></div>
       <div><small>${t('cash')}</small><b>${kes(sum(all, 'cash'))}</b></div>
@@ -745,6 +769,7 @@ app.addEventListener('click', async (e) => {
     case 'lang': setLang(getLang() === 'en' ? 'sw' : 'en'); render(); break;
     case 'tab':  // a bottom tab always opens the start of its section
       S.tab = v; S.printerView = false;
+      if (v === 'today') S.todayBiz = null;
       if (v === 'sell' && S.screen !== 'waiting') { S.screen = 'categories'; S.ng = null; }
       if (v === 'owner') S.o.section = 'menu';
       render();
@@ -772,27 +797,27 @@ app.addEventListener('click', async (e) => {
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
     case 'ask': await askOwner(); break;
+    case 'today-biz': S.todayBiz = v || null; render(); break;
     case 'sell-edit':
       if (!online()) { toast(t('needsInternet'), true); break; }
       S.editSell = !S.editSell; S.screen = 'categories'; render(); break;
-    case 'new-group': S.ng = newGroupDraft(); S.screen = 'newgroup'; render(); break;
+    case 'new-group': S.ng = newGroupDraft(v || S.biz); S.screen = 'newgroup'; render(); break;
     case 'ng-cancel': S.ng = null; S.screen = 'categories'; render(); break;
     case 'ng-icon': S.ng.icon = v; S.ng.picked = true; render(); break;
     case 'ng-addgrade': S.ng.grades.push({ name: '', normal: '', lowest: '' }); render(); break;
     case 'ng-rmgrade': S.ng.grades.splice(+v, 1); render(); break;
     case 'move-cat': {
       const [id, dir] = v.split(':');
-      await moveItem('categories', S.catalog.categories.filter(inBiz), id, +dir); break;
+      const biz = category(id)?.business_id;
+      await moveItem('categories', S.catalog.categories.filter((c) => c.business_id === biz), id, +dir); break;
     }
     case 'move-grade': {
       const [id, dir] = v.split(':');
       await moveItem('grades', S.catalog.grades.filter((g) => g.category_id === S.categoryId), id, +dir); break;
     }
     case 'biz': {
-      if (S.cart.length || S.screen === 'waiting') { toast(t('finishSaleFirst'), true); break; }
       const i = S.businesses.findIndex((b) => b.id === S.biz);
       S.biz = S.businesses[(i + 1) % S.businesses.length]?.id || null; store.set('biz', S.biz);
-      S.screen = 'categories'; S.categoryId = null;
       toast(shopName());
       if (S.tab === 'today') await loadToday();
       if (S.tab === 'owner') owner.go(S.o.section);
@@ -840,7 +865,7 @@ app.addEventListener('input', (e) => {
     const m = ng.match(/^g(\d+)\.(\w+)$/);
     if (m) S.ng.grades[+m[1]][m[2]] = e.target.value; else S.ng[ng] = e.target.value;
     if (ng === 'name' && !S.ng.picked) {     // live icon suggestion while typing the name
-      const ic = suggestIcon(e.target.value, curBiz()?.kind);
+      const ic = suggestIcon(e.target.value, ngBiz()?.kind);
       const el = document.querySelector('.ngicon'); if (el) el.textContent = ic;
       document.querySelectorAll('.iconpick button').forEach((b) => b.classList.toggle('on', b.dataset.v === ic));
     }

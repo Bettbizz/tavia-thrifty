@@ -15,6 +15,8 @@ jobs:
           for f in index.html app.js owner.js printer.js mpesa.js icons.js icons.js i18n.js config.js sw.js style.css manifest.webmanifest; do
             [ -s "$f" ] || { echo "::error file=$f::$f is empty"; exit 1; }
           done
-          for f in app.js owner.js printer.js mpesa.js icons.js i18n.js config.js sw.js; do node --check "$f"; done
+          # check every file the way the browser loads it (app files are modules, sw.js is a script)
+          for f in app.js owner.js printer.js mpesa.js icons.js i18n.js config.js; do cp "$f" "/tmp/check-$f.mjs"; node --check "/tmp/check-$f.mjs"; done
+          node --check sw.js
           grep -q "addEventListener('push'" sw.js || { echo "::error file=sw.js::sw.js has no notification handler"; exit 1; }
           node -e "JSON.parse(require('fs').readFileSync('manifest.webmanifest','utf8'))"

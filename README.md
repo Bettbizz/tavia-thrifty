@@ -98,8 +98,12 @@ Actions → New repository secret, for each of:
 
 ## Two businesses
 
-Tap the business name at the top to switch between Tavia Thrifty and the
-jewellery business. Each has its own item groups, prices, stock, sales,
+Staff see both businesses on one Sell page (a heading for each) and can put
+clothes and jewellery in one cart with one payment; it is saved as one sale
+per business. Today has All businesses / Tavia Thrifty / Jewellery buttons.
+
+Owners tap the business name at the top to switch between Tavia Thrifty and
+the jewellery business for the management pages. Each has its own item groups, prices, stock, sales,
 reports and receipt name (Owner → Settings edits the selected business).
 Staff and logins are shared. Each business has its own cash count; Owner →
 All businesses shows what each made on a day and the total. A sale can only
