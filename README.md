@@ -158,3 +158,19 @@ to choose when two payments look alike. A code can't be used on two sales.
   uninstalled, before they send, so let the "Waiting to send" count reach zero
   before doing either.
 - Owner → Settings → Backup downloads every sale as a spreadsheet file.
+
+## M-Pesa till check (with the shop tablet)
+
+The shop tablet holds the till SIM. Its app (Tavia Home) reads each M-Pesa payment message and hands it to
+this app, which saves it in `till_payments` (update 010). Each payment is matched with the sale that used its
+code. When **Owner → Settings → till check** is on (`settings.till_check`):
+
+- A sale paid by **M-Pesa** can only be completed by an employee when the payment is in the till and its
+  amount equals the sale total. The cart shows the waiting payments; one with the right amount is picked by
+  itself. A different amount → "Ask the owner" (the approval card shows what the till received).
+  **Cash sales are not affected.**
+- Phones get a notification when money sits in the till 10 minutes without a sale, when amounts differ, or
+  when a sale uses a code the till never received. Today shows an **M-Pesa till** card; "✓ I checked" records
+  what was found.
+
+The tablet's home screen also shows today's sales on its goal dial (`today_totals()`).

@@ -94,6 +94,30 @@ Deno.serve(async (req) => {
       }))) });
     }
 
+    // M-Pesa till check: any staff phone asks every few minutes; each problem is sent once,
+    // to owners and to the staff phones, so whoever is nearest can check.
+    if (body.till_check) {
+      const { data: a, error } = await admin.rpc('till_alerts');
+      if (error) return json({ error: error.message }, 500);
+      const k = (n: number) => 'KES ' + Number(n).toLocaleString('en-KE');
+      const first = (s?: string) => (s ?? '').trim().split(/\s+/)[0] ?? '';
+      const lines: string[] = [];
+      for (const p of a?.open ?? []) lines.push(`${k(p.amount)} from ${first(p.sender) || 'a customer'} (${p.code}) is in the till but not on any sale.`);
+      for (const p of a?.mismatch ?? []) lines.push(`${p.code}: till got ${k(p.amount)} but the sale says ${k(p.sale_total)}.`);
+      for (const s of a?.missing ?? []) lines.push(`Sale of ${k(s.total)} used M-Pesa code ${s.code}, but the till never received it.`);
+      if (!lines.length) return json({ sent: 0, phones: 0, failed: [] });
+      const { data: staff } = await admin.from('profiles').select('id').eq('active', true);
+      const ids = (staff ?? []).map((o: { id: string }) => o.id);
+      const { data: subs } = ids.length
+        ? await admin.from('push_subscriptions').select('endpoint, p256dh, auth').in('user_id', ids)
+        : { data: [] };
+      return json({ alerts: a, ...(await sendAll(admin, subs ?? [], JSON.stringify({
+        title: lines.length === 1 ? 'M-Pesa till: please check' : `M-Pesa till: ${lines.length} things to check`,
+        body: lines.slice(0, 3).join('\n') + (lines.length > 3 ? `\n…and ${lines.length - 3} more` : ''),
+        url: './?go=till', tag: 'till-' + Date.now(),
+      }))) });
+    }
+
     const request_id = body.request_id;
     const { data: r } = await admin.from('price_requests')
       .select('id, total, status, requested_by, lines').eq('id', request_id).single();

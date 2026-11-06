@@ -319,3 +319,16 @@ main:has(.cartbar) { padding-bottom: 96px; }
   .cartfoot .total b { font-size: 1.5rem; }
   main:has(.split) { padding-bottom: 12px; }
 }
+
+/* M-Pesa till: payments to tap, and today's till check */
+.mpchoice.on { border-color: var(--brand); background: #e3f1e8; box-shadow: 0 0 0 2px var(--brand) inset; }
+.mpchoice.same b::after { content: ' ✓'; color: var(--ok); }
+.mptype { margin-top: 8px; }
+.mptype summary { color: var(--muted); font-size: .9rem; cursor: pointer; padding: 4px 0; }
+.card.till h2 { margin: 0 0 8px; font-size: 1.05rem; }
+.stats.two { grid-template-columns: 1fr 1fr; }
+.tillrow { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: .92rem; }
+.tillrow small { color: var(--muted); }
+.tillrow .tr { text-align: right; }
+.tillrow.bad .tr { color: var(--warn); font-weight: 600; }
+.tillrow.ok .tr { color: var(--muted); }

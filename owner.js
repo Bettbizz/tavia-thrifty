@@ -256,6 +256,12 @@ export function createOwner(ctx) {
       }).join('')}
       <div class="srow total1"><span>${t('total')} · ${r.payment_method === 'mpesa' ? `M-Pesa ${esc(r.mpesa_code)}` : t('cash')}</span>
         <b>${kes(r.total)}</b></div>
+      ${r.payment_method === 'mpesa' && S.settings.till_check ? (() => {
+        const p = (S.till || []).find((x) => x.code === r.mpesa_code);
+        return `<div class="srow"><span>${t('tillApproval')}</span>${p
+          ? `<b class="${p.amount === r.total ? '' : 'neg'}">${p.amount === r.total ? '✓' : '⚠'} ${kes(p.amount)}</b>`
+          : `<b class="neg">⚠ ${t('tillNotReceived')}</b>`}</div>`;
+      })() : ''}
       <div class="two">
         <button class="btn bad" data-a="o-reject" data-v="${r.id}">${t('reject')}</button>
         <button class="btn ok" data-a="o-approve" data-v="${r.id}">${t('approve')}</button>

@@ -3,7 +3,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
 import { createOwner } from './owner.js';
-import { parseMessages, chooseCode } from './mpesa.js';
+import { parseMessages, chooseCode, shortName } from './mpesa.js';
 import { iconsFor, suggestIcon } from './icons.js';
 import { printReceipt, getPrefs, setPrefs, connectPrinter, printerName, bluetoothSupported } from './printer.js';
 
@@ -50,6 +50,8 @@ const S = {
   signup: false,
   approvals: null,                     // owner: price approvals waiting
   pendingReq: store.get('pendingReq', null), // employee: waiting for owner approval
+  till: store.get('till', []),          // recent M-Pesa till payments (see the till section)
+  tillReport: null,
 };
 if (S.pendingReq) S.screen = 'waiting';
 
@@ -110,7 +112,7 @@ async function loadCatalog() {
   S.catalog = { categories: c.data, grades: g.data, promotions: p.data };
   store.set('catalog', S.catalog);
   const [st, bz] = await Promise.all([
-    sb.from('settings').select('business_name, receipt_phone, receipt_footer').eq('id', 1).single(),
+    sb.from('settings').select('business_name, receipt_phone, receipt_footer, till_check').eq('id', 1).single(),
     sb.from('businesses').select('*').eq('active', true).order('sort_order'),
   ]);
   if (!st.error && st.data) { S.settings = st.data; store.set('settings', st.data); }
@@ -161,10 +163,97 @@ async function sync() {
       saveQueue();
     }
   } finally { syncing = false; }
-  if (sent) { owner.stockCheck(); owner.loadStock(); }   // low-stock alert for owners
+  if (sent) { owner.stockCheck(); owner.loadStock(); reportTablet(); }   // low-stock alert for owners; tablet dial
   if (S.tab === 'today') await loadToday();
   render();
 }
+
+// ---------- M-Pesa till ----------
+// The shop tablet holds the till SIM. Its app (Tavia Home) reads each payment SMS and hands it to this
+// page; we save it in the database, so every phone sees the till. A sale paid by M-Pesa can only be
+// completed by an employee when the payment is in the till and its amount equals the sale total.
+// Cash sales are never affected.
+const tillOn = () => !!S.settings.till_check;
+const tablet = () => window.TaviaHome || null;
+const minsAgo = (iso) => (Date.now() - new Date(iso).getTime()) / 60000;
+
+async function loadTill() {
+  if (!tillOn() || !S.session) return;
+  if (online()) {
+    const since = new Date(Date.now() - 36 * 3600e3).toISOString();
+    const { data, error } = await sb.from('till_payments')
+      .select('code, amount, sender, paid_at, status, sale_total, note').gte('paid_at', since).order('paid_at', { ascending: false });
+    if (!error) S.till = [...S.till.filter((l) => l.local && !data.some((d) => d.code === l.code)), ...data];
+  }
+  store.set('till', S.till);
+}
+
+// Payments the tablet read from SMS. Kept on the tablet until saved, so they work offline too.
+let pulling = false;
+async function pullTablet() {
+  const tb = tablet();
+  if (!tb || !S.session || pulling) return;
+  pulling = true;
+  try {
+    let items = [];
+    try { items = JSON.parse(tb.pendingSms() || '[]'); } catch { /* nothing waiting */ }
+    for (const it of items) {                    // { id, body, at }
+      const m = parseMessages(it.body)[0];
+      if (!m || !m.received || !m.amount) { tb.ack(String(it.id)); continue; }
+      if (!S.till.some((x) => x.code === m.code)) {
+        S.till.unshift({ code: m.code, amount: m.amount, sender: m.name, status: 'open', local: true,
+          paid_at: m.paid_at || new Date(it.at || Date.now()).toISOString() });
+      }
+      if (!online()) continue;
+      const { error } = await sb.rpc('record_till_payment', { p_code: m.code, p_amount: m.amount, p_sender: m.name,
+        p_phone: m.phone, p_paid_at: m.paid_at, p_raw: it.body });
+      if (!error || !isNetErr(error)) tb.ack(String(it.id));
+    }
+    store.set('till', S.till);
+  } finally { pulling = false; }
+}
+const typing = () => /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
+// The tablet calls this the moment a payment SMS arrives.
+window.taviaTill = async () => { await pullTablet(); await loadTill(); if (!typing()) render(); };
+
+const tillFor = (code) => S.till.find((p) => p.code === code);
+const usable = (p) => p && (p.status === 'open' || p.status === 'checked') && !usedCodes().includes(p.code);
+// Payments in the till that no sale has used yet (newest first).
+const waitingPayments = () => S.till.filter((p) => usable(p) && minsAgo(p.paid_at) < 12 * 60);
+// The M-Pesa check for the cart: ok | wrong | notyet | used | empty
+function mpCheck() {
+  const code = S.mpesa.trim().toUpperCase();
+  if (!code) return { state: 'empty' };
+  const p = tillFor(code);
+  if (!p) return { state: 'notyet', code };
+  if (!usable(p)) return { state: 'used', code, p };
+  return { state: p.amount === cartTotal() ? 'ok' : 'wrong', code, p };
+}
+// Payments someone should look at: open for 10+ minutes, or amounts that differ.
+const tillProblems = () => S.till.filter((p) => (p.status === 'open' && minsAgo(p.paid_at) > 10 && !usedCodes().includes(p.code))
+  || p.status === 'mismatch');
+async function loadTillReport() {
+  if (!tillOn() || !online() || !S.session) return;
+  const day = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);   // today in Kenya
+  const { data, error } = await sb.rpc('till_report', { p_date: day });
+  if (!error) S.tillReport = data;
+}
+async function checkTill(code) {
+  const note = prompt(t('tillCheckAsk'));
+  if (!note || !note.trim()) return;
+  const { error } = await sb.rpc('check_till_payment', { p_code: code, p_note: note.trim() });
+  if (error) return toast(isNetErr(error) ? t('needsInternet') : error.message, true);
+  toast(t('saved'));
+  await Promise.all([loadTill(), loadTillReport()]); render();
+}
+// The shop tablet's home screen shows today's sales on its goal dial (totals only).
+async function reportTablet() {
+  const tb = tablet();
+  if (!tb || !tb.reportToday || !online() || !S.session) return;
+  const { data, error } = await sb.rpc('today_totals');
+  if (!error && data) try { tb.reportToday(JSON.stringify(data)); } catch { /* old tablet app */ }
+}
+const tillAlerts = () => { if (tillOn() && online() && S.session) sb.functions.invoke('notify-owners', { body: { till_check: true } }).catch(() => {}); };
 
 // ---------- actions ----------
 function toast(msg, bad = false) {
@@ -198,6 +287,7 @@ function completeSale() {
   if (S.pay === 'mpesa') {
     code = S.mpesa.trim().toUpperCase();
     if (!/^[A-Z0-9]{8,12}$/.test(code)) return toast(t('mpesaCodeMissing'), true);
+    if (tillOn() && !isOwner() && mpCheck().state !== 'ok') return toast(t('tillWaitBtn'), true);
   }
   if (!isOwner() && S.cart.some((l) => l.unit_price < priceInfo(grade(l.grade_id)).floor)) return;
 
@@ -377,6 +467,9 @@ function shell(body) {
   const lowBanner = lows.length && !(S.tab === 'owner' && ['bales', 'menu'].includes(S.o.section))
     ? `<button class="banner lowb" data-a="o-gobales">⚠ ${t('lowBannerGroups').replace('{list}',
         lows.map((g) => `${esc(g.icon || g.name)} ${g.remaining}`).join(' · '))}</button>` : '';
+  const tp = tillOn() ? tillProblems().length : 0;
+  const tillBanner = tp && !(S.tab === 'today' && !S.printerView)
+    ? `<button class="banner lowb" data-a="till">⚠ ${t('tillBanner').replace('{n}', tp)}</button>` : '';
   const askBanner = asks && !(S.tab === 'owner' && S.o.section === 'approvals')
     ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
   return `
@@ -388,7 +481,7 @@ function shell(body) {
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
     </header>
-    ${askBanner}${lowBanner}${banner}
+    ${askBanner}${tillBanner}${lowBanner}${banner}
     <main>${body}</main>
     <nav class="tabs ${isOwner() ? 'three' : ''}">
       <button data-a="tab" data-v="sell" class="${S.tab === 'sell' ? 'on' : ''}"><span class="ic">🛍️</span>${t('sell')}</button>
@@ -613,9 +706,18 @@ function renderCart(panel = false) {
     </div>
     ${S.pay === 'mpesa' ? renderMpesa() : ''}
     <div class="total"><span>${t('total')}</span><b>${kes(cartTotal())}</b></div>
-    ${blocked
-      ? `<button class="primary askbtn" data-a="ask" ${S.busy ? 'disabled' : ''}>🔔 ${t('askOwnerBtn')}</button>`
-      : `<button class="primary" data-a="complete">${t('complete')}</button>`}${panel ? '</div>' : ''}`;
+    ${payButton(blocked)}${panel ? '</div>' : ''}`;
+}
+
+// Complete / Ask the owner / Waiting for the payment. Cash sales are never held up by the till.
+function payButton(blocked) {
+  const ask = `<button class="primary askbtn" data-a="ask" ${S.busy ? 'disabled' : ''}>🔔 ${t('askOwnerBtn')}</button>`;
+  if (blocked) return ask;
+  if (S.pay !== 'mpesa' || !tillOn() || isOwner()) return `<button class="primary" data-a="complete">${t('complete')}</button>`;
+  const c = mpCheck();
+  if (c.state === 'ok') return `<button class="primary" data-a="complete">${t('complete')}</button>`;
+  if (c.state === 'wrong') return ask;                      // paid a different amount: the owner decides
+  return `<button class="primary" disabled>⏳ ${t('tillWaitBtn')}</button>`;
 }
 
 // ---------- M-Pesa: paste the confirmation message to fill the code ----------
@@ -641,7 +743,36 @@ async function pasteMpesa() {
   S.mpManual = true; render();
   setTimeout(() => document.querySelector('[data-a="mp-text"]')?.focus(), 50);
 }
+function renderTillPick() {
+  const total = cartTotal();
+  const list = waitingPayments();
+  if (!S.mpesa) {                                   // exactly one payment with this amount: pick it
+    const same = list.filter((p) => p.amount === total);
+    if (same.length === 1) S.mpesa = same[0].code;
+  }
+  const c = mpCheck();
+  const amt = (p) => kes(p.amount);
+  const msg = {
+    ok: () => `<p class="note">✓ ${t('tillOk').replace('{amount}', amt(c.p))}</p>`,
+    wrong: () => `<p class="warn">⚠ ${t('tillWrong').replace('{amount}', amt(c.p)).replace('{total}', kes(total))}</p>`,
+    notyet: () => `<p class="warn">⏳ ${t('tillNotYet').replace('{code}', esc(c.code))}</p>`,
+    used: () => `<p class="warn">⚠ ${t('tillUsed').replace('{code}', esc(c.code))}</p>`,
+    empty: () => '',
+  }[c.state]();
+  return `<div class="mpbox">
+    <p class="small">${list.length ? t('tillWaiting') : t('tillNone')}</p>
+    ${list.slice(0, 6).map((p) => `<button class="mpchoice ${S.mpesa === p.code ? 'on' : ''} ${p.amount === total ? 'same' : ''}" data-a="mp-pick" data-v="${p.code}">
+        <b>${amt(p)}</b><span>${esc(shortName(p.sender) || '?')}</span><span>${timeOf(p.paid_at)}</span></button>`).join('')}
+    ${msg}
+    ${isOwner() && c.state !== 'ok' && c.state !== 'empty' ? `<p class="small muted">${t('tillOwnerOverride')}</p>` : ''}
+    <details class="mptype" ${S.mpesa && !tillFor(S.mpesa.trim().toUpperCase()) ? 'open' : ''}><summary>${t('tillTypeCode')}</summary>
+      <label class="mpesa">${t('mpesaCode')}
+        <input data-a="mpesa" autocapitalize="characters" autocomplete="off" spellcheck="false"
+          placeholder="${t('mpesaCodeHint')}" value="${esc(S.mpesa)}"></label></details>
+  </div>`;
+}
 function renderMpesa() {
+  if (tillOn()) return renderTillPick();
   const info = S.mpInfo;
   const wrongAmount = info && info.amount != null && info.amount !== cartTotal();
   return `<div class="mpbox">
@@ -755,7 +886,7 @@ function renderToday() {
     </div>
   </div>`).join('');
 
-  return `<div class="todayhead"><h1>${t('salesToday')}</h1>
+  return `${tillOn() ? renderTillCard() : ''}<div class="todayhead"><h1>${t('salesToday')}</h1>
       <button class="link" data-a="refresh">↻ ${t('refresh')}</button></div>
     ${S.businesses.length > 1 ? `<div class="bizchips" style="grid-template-columns: repeat(${S.businesses.length + 1}, 1fr)">
       <button class="chip ${!S.todayBiz ? 'on' : ''}" data-a="today-biz" data-v="">${t('allShort')}</button>
@@ -774,6 +905,29 @@ function renderToday() {
     <button class="link logout" data-a="logout">${t('logout')}</button>`;
 }
 
+// The till check for today: what reached the till against what the POS recorded as M-Pesa.
+function renderTillCard() {
+  const r = S.tillReport;
+  if (!r) return `<div class="card till"><h2>📱 ${t('tillTitle')}</h2><p class="small">${online() ? t('loading') : t('offline')}</p></div>`;
+  const row = (left, right, cls, btn) => `<div class="tillrow ${cls}"><div>${left}</div><div class="tr">${right}${btn || ''}</div></div>`;
+  const pay = r.payments.filter((p) => p.status === 'open' || p.status === 'mismatch');
+  const checked = r.payments.filter((p) => p.status === 'checked');
+  const lines = [
+    ...pay.map((p) => row(`<b>${kes(p.amount)}</b> · ${esc(shortName(p.sender) || '?')} · ${timeOf(p.paid_at)}<br><small>${esc(p.code)}</small>`,
+      p.status === 'open' ? t('tillOpen') : t('tillMismatch').replace('{total}', kes(p.sale_total)), 'bad',
+      ` <button class="link" data-a="till-check" data-v="${p.code}">${t('tillCheckBtn')}</button>`)),
+    ...r.missing.map((x) => row(`<b>${kes(x.total)}</b> · ${esc(x.seller || '')} · ${timeOf(x.sold_at)}<br><small>${esc(x.code)}</small>`,
+      t('tillMissing'), 'bad')),
+    ...checked.map((p) => row(`${kes(p.amount)} · ${timeOf(p.paid_at)}<br><small>${esc(p.code)}</small>`,
+      `${t('tillChecked')}: ${esc(p.note || '')}${p.checked_by ? ` (${esc(p.checked_by)})` : ''}`, 'ok')),
+  ];
+  return `<div class="card till"><h2>📱 ${t('tillTitle')}</h2>
+    <div class="stats two"><div><small>${t('tillIn')}</small><b>${kes(r.totals.till)}</b></div>
+      <div><small>${t('tillOnPos')}</small><b>${kes(r.totals.pos_mpesa)}</b></div></div>
+    ${lines.length ? lines.join('') : `<p class="note">✓ ${t('tillAllGood')}</p>`}
+  </div>`;
+}
+
 // ---------- events ----------
 app.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-a]');
@@ -787,7 +941,7 @@ app.addEventListener('click', async (e) => {
       if (v === 'sell' && S.screen !== 'waiting') { S.screen = 'categories'; S.ng = null; }
       if (v === 'owner') S.o.section = 'menu';
       render();
-      if (v === 'today') { await loadToday(); render(); }
+      if (v === 'today') { await Promise.all([loadToday(), loadTill(), loadTillReport()]); render(); }
       if (v === 'owner') owner.go('menu');
       break;
     case 'cat': S.categoryId = v; S.screen = 'grades'; render(); break;
@@ -800,13 +954,17 @@ app.addEventListener('click', async (e) => {
     case 'mp-paste': await pasteMpesa(); break;
     case 'mp-read': await applyMpesaText(S.mpText); break;
     case 'mp-pick': {
+      if (tillOn()) { S.mpesa = S.mpesa === v ? '' : v; render(); break; }
       const m = (S.mpChoices || []).find((x) => x.code === v);
       if (m) { S.mpesa = m.code; S.mpInfo = m; S.mpChoices = null; S.mpManual = false; S.mpText = ''; }
       render(); break;
     }
+    case 'till': S.tab = 'today'; S.printerView = false; S.todayBiz = null; render();
+      await Promise.all([loadTill(), loadToday(), loadTillReport()]); render(); break;
+    case 'till-check': await checkTill(v); break;
     case 'complete': completeSale(); break;
     case 'new': S.screen = 'categories'; S.lastSale = null; render(); break;
-    case 'refresh': await Promise.all([loadToday(), loadCatalog()]); render(); break;
+    case 'refresh': await Promise.all([loadToday(), loadCatalog(), loadTill(), loadTillReport()]); render(); break;
     case 'retry': { const s = S.queue.find((x) => x.id === v); if (s) { delete s.error; saveQueue(); sync(); } break; }
     case 'void': await voidSale(v); break;
     case 'logout': await logout(); break;
@@ -864,6 +1022,7 @@ app.addEventListener('click', async (e) => {
 
 app.addEventListener('change', (e) => {
   if (owner.onChange(e.target)) return;
+  if (e.target.dataset.a === 'mpesa' && tillOn()) { render(); return; }   // typed code: check it against the till
   if (e.target.dataset.a !== 'price') return;
   const line = S.cart[+e.target.dataset.v];
   const n = Math.round(Number(e.target.value));
@@ -929,6 +1088,15 @@ window.addEventListener('offline', render);
 setInterval(sync, 30000);
 setInterval(() => { owner.pollApprovals(); checkRequest(); }, 6000);
 setInterval(() => owner.loadStock(), 120000);
+setInterval(async () => {                            // till: new payments every 20 s
+  if (!tillOn() || !S.session) return;
+  const key = () => S.till.map((p) => p.code + p.status).join();
+  const before = key();
+  await pullTablet(); await loadTill();
+  if (key() !== before && !typing()) render();
+}, 20000);
+setInterval(tillAlerts, 180000);                     // notifications for anything left unmatched
+setInterval(reportTablet, 60000);                    // tablet home: today's sales for the goal dial
 
 const owner = createOwner({ S, sb, t, esc, kes, render, toast, loadCatalog, loadProfile, priceInfo });
 
@@ -946,7 +1114,13 @@ function start() {
         await Promise.all([loadProfile(), loadCatalog()]);
         render();
         sync(); owner.pollApprovals(); checkRequest(); owner.loadStock();
+        pullTablet().then(loadTill).then(() => { render(); tillAlerts(); });
+        reportTablet();
         const go = new URLSearchParams(location.search).get('go');
+        if (go === 'till') {
+          history.replaceState(null, '', location.pathname);
+          S.tab = 'today'; render(); await Promise.all([loadToday(), loadTill(), loadTillReport()]); render();
+        }
         if ((go === 'approvals' || go === 'bales') && isOwner()) {
           history.replaceState(null, '', location.pathname);
           S.tab = 'owner'; owner.go(go);
@@ -962,5 +1136,6 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', (e) => {   // notification tapped while app open
     if ((e.data?.go === 'approvals' || e.data?.go === 'bales') && isOwner()) { S.tab = 'owner'; owner.go(e.data.go); }
+    if (e.data?.go === 'till') { S.tab = 'today'; S.printerView = false; render(); loadTillReport().then(render); }
   });
 }
