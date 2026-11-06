@@ -9,6 +9,10 @@ import { printReceipt, getPrefs, setPrefs, connectPrinter, printerName, bluetoot
 
 const app = document.getElementById('app');
 
+// On the shop tablet, the tablet and this page share one language switch (English or Kiswahili).
+try { const tl = window.TaviaHome?.lang?.(); if (tl === 'en' || tl === 'sw') setLang(tl); } catch { /* not on the tablet */ }
+window.taviaLang = (l) => { if ((l === 'en' || l === 'sw') && getLang() !== l) { setLang(l); render(); } };
+
 // ---------- small helpers ----------
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -934,7 +938,7 @@ app.addEventListener('click', async (e) => {
   if (!b || b.tagName === 'INPUT') return;
   const a = b.dataset.a, v = b.dataset.v;
   switch (a) {
-    case 'lang': setLang(getLang() === 'en' ? 'sw' : 'en'); render(); break;
+    case 'lang': setLang(getLang() === 'en' ? 'sw' : 'en'); render(); try { window.TaviaHome?.setLang?.(getLang()); } catch { /* not on the tablet */ } break;
     case 'tab':  // a bottom tab always opens the start of its section
       S.tab = v; S.printerView = false;
       if (v === 'today') S.todayBiz = null;

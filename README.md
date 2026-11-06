@@ -163,7 +163,7 @@ to choose when two payments look alike. A code can't be used on two sales.
 
 The shop tablet holds the till SIM. Its app (Tavia Home) reads each M-Pesa payment message and hands it to
 this app, which saves it in `till_payments` (update 010). Each payment is matched with the sale that used its
-code. When **Owner → Settings → till check** is on (`settings.till_check`):
+code. Once the tablet is set up, the till check is switched on (`settings.till_check`):
 
 - A sale paid by **M-Pesa** can only be completed by an employee when the payment is in the till and its
   amount equals the sale total. The cart shows the waiting payments; one with the right amount is picked by
