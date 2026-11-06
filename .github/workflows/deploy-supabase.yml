@@ -57,7 +57,7 @@ jobs:
           set -eo pipefail
           if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then echo "::warning::Supabase access token or VAPID key not set yet; skipping"; exit 0; fi
           VAPID_PUBLIC_KEY=$(sed -n "s/^export const VAPID_PUBLIC_KEY = '\(.*\)';/\1/p" config.js)
-          supabase secrets set --project-ref "$PROJECT_REF" \
+          supabase secrets set --yes --project-ref "$PROJECT_REF" \
             VAPID_PUBLIC_KEY="$VAPID_PUBLIC_KEY" VAPID_PRIVATE_KEY="$VAPID_PRIVATE_KEY" VAPID_SUBJECT="$APP_URL"
           # The function checks the caller's login itself.
-          supabase functions deploy notify-owners --project-ref "$PROJECT_REF" --no-verify-jwt
+          supabase functions deploy notify-owners --yes --project-ref "$PROJECT_REF" --no-verify-jwt
