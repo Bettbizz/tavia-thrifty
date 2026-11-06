@@ -197,10 +197,12 @@ export function createOwner(ctx) {
         }
         case 'settings': await Promise.all([pushStatus(), loadStock()]); break;
         case 'staff': {
-          const { data, error } = await sb.from('profiles').select('id, full_name, email, role, active')
-            .order('active').order('full_name');
+          const [{ data, error }, logins] = await Promise.all([
+            sb.from('profiles').select('id, full_name, email, role, active').order('active').order('full_name'),
+            sb.rpc('staff_logins')]);
           if (error) throw error;
-          O.staff = data; break;
+          const by = Object.fromEntries((logins.data || []).map((x) => [x.id, x]));
+          O.staff = data.map((p) => ({ ...p, login: by[p.id] || null })); break;
         }
       }
     } catch (e) { fail(e); }
@@ -537,6 +539,8 @@ export function createOwner(ctx) {
         <label>${t('name')}${p.id === S.session.user.id ? ` <small>(${t('you')})</small>` : ''}
           <input name="name" value="${esc(p.full_name)}" required></label>
         <div class="small muted">${esc(p.email || '')}</div>
+        ${p.login ? `<div class="small ${p.login.email_confirmed ? 'muted' : 'neg'}">${!p.login.email_confirmed ? '⚠ ' + t('emailNotConfirmed')
+          : p.login.last_sign_in_at ? t('lastLogin') + ': ' + fmtDay(p.login.last_sign_in_at) : t('neverLoggedIn')}</div>` : ''}
         <div class="two">
           <label>${t('role')}<select name="role">
             <option value="employee" ${p.role === 'employee' ? 'selected' : ''}>${t('employee')}</option>

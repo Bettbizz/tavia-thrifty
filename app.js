@@ -1069,7 +1069,13 @@ app.addEventListener('submit', async (e) => {
   S.busy = true; S.loginError = ''; render();
   const { error } = await sb.auth.signInWithPassword({ email: S.loginEmail, password: String(f.get('password') || '') });
   S.busy = false;
-  if (error) { S.loginError = t('loginFailed'); render(); }
+  if (error) {                         // say why: unconfirmed email, too many tries, no internet, or a wrong password
+    const code = error.code || '';
+    S.loginError = code === 'email_not_confirmed' || /not confirmed/i.test(error.message) ? t('loginNotConfirmed')
+      : code === 'over_request_rate_limit' || error.status === 429 ? t('loginTooMany')
+      : isNetErr(error) ? t('needInternetLogin') : t('loginFailed');
+    render();
+  }
 });
 
 async function signup(form) {
