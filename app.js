@@ -116,7 +116,7 @@ async function loadCatalog() {
   S.catalog = { categories: c.data, grades: g.data, promotions: p.data };
   store.set('catalog', S.catalog);
   const [st, bz] = await Promise.all([
-    sb.from('settings').select('business_name, receipt_phone, receipt_footer, till_check').eq('id', 1).single(),
+    sb.from('settings').select('business_name, receipt_phone, receipt_footer, till_check, till_check_since').eq('id', 1).single(),
     sb.from('businesses').select('*').eq('active', true).order('sort_order'),
   ]);
   if (!st.error && st.data) { S.settings = st.data; store.set('settings', st.data); }
@@ -234,7 +234,8 @@ function mpCheck() {
   return { state: p.amount === cartTotal() ? 'ok' : 'wrong', code, p };
 }
 // Payments someone should look at: open for 10+ minutes, or amounts that differ.
-const tillProblems = () => S.till.filter((p) => (p.status === 'open' && minsAgo(p.paid_at) > 10 && !usedCodes().includes(p.code))
+const tillSince = () => (S.settings.till_check_since ? new Date(S.settings.till_check_since).getTime() : 0);
+const tillProblems = () => S.till.filter((p) => new Date(p.paid_at).getTime() >= tillSince()).filter((p) => (p.status === 'open' && minsAgo(p.paid_at) > 10 && !usedCodes().includes(p.code))
   || p.status === 'mismatch');
 async function loadTillReport() {
   if (!tillOn() || !online() || !S.session) return;
