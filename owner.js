@@ -544,7 +544,9 @@ export function createOwner(ctx) {
           <label class="check"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}> ${t('active')}</label>
         </div>
         <button class="primary small">${t('save')}</button>
-      </form></div>`).join('');
+      </form>
+      ${p.role === 'employee' && p.id !== S.session.user.id
+        ? `<button type="button" class="link" data-a="o-pw" data-v="${p.id}">🔑 ${t('setPassword')}</button>` : ''}</div>`).join('');
   }
 
   // ---------------- backup (CSV) ----------------
@@ -736,6 +738,18 @@ export function createOwner(ctx) {
       case 'o-push-recheck': await pushStatus(); render(); return true;
       case 'o-cancel': O.adding = false; render(); return true;
       case 'o-approve': await decide(v, true); render(); return true;
+      case 'o-pw': {                              // forgotten password: the owner sets a new one
+        const p = (O.staff || []).find((x) => x.id === v);
+        if (!p) return true;
+        const n = crypto.getRandomValues(new Uint32Array(1))[0] % 9000 + 1000;
+        const pw = prompt(t('newPasswordFor').replace('{name}', p.full_name || p.email || ''), `tavia${n}`);
+        if (pw == null) return true;
+        if (pw.trim().length < 6) { toast(t('passwordShort'), true); return true; }
+        const { error } = await sb.rpc('set_staff_password', { p_user: v, p_password: pw.trim() });
+        if (error) { fail(error); return true; }
+        alert(t('passwordSet').replace('{name}', p.full_name || '').replace('{pw}', pw.trim()));
+        return true;
+      }
       case 'o-reject': if (confirm(t('reject') + '?')) { await decide(v, false); render(); } return true;
       case 'o-hide': case 'o-show': {
         const { error } = await sb.from('grades').update({ active: a === 'o-show' }).eq('id', v);

@@ -123,6 +123,11 @@ reorder its grades (▲ ▼) or add a grade, or tap **+ Add item**. Icons are
 picked from the name automatically (clothes or jewellery set) and can be
 changed by tapping another. Tap **✓ Done** to go back to the normal view.
 
+## Forgotten staff password
+
+Owner → Staff → **🔑 Set new password** under an employee: type (or keep) a temporary password and tell it to
+them. It works straight away and signs them out of their other phones. Owners' own passwords can't be changed here.
+
 ## Hidden owner tools (Settings → Advanced)
 
 - **Edit or delete bales:** fix a bale's date, supplier, cost or pieces
