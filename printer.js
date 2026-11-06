@@ -36,10 +36,7 @@ export async function connectPrinter() {
     if (!list.length) throw new Error('No Bluetooth printer is paired with this tablet yet. Owner menu (hold the seal) → Receipt printer.');
     let pick = list[0];
     if (list.length > 1) {
-      const n = Number(prompt(list.map((d, i) => `${i + 1}. ${d.name}`).join('
-') + '
-
-Number of the printer:', '1'));
+      const n = Number(prompt(list.map((d, i) => `${i + 1}. ${d.name}`).join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + 'Number of the printer:', '1'));
       if (!n || !list[n - 1]) throw Object.assign(new Error('cancelled'), { name: 'NotFoundError' });
       pick = list[n - 1];
     }
