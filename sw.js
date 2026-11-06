@@ -1,13 +1,14 @@
 // Offline support: keeps the app's files on the phone so it opens without internet.
 // Change the version number whenever you upload a new version of the app.
-const CACHE = 'bizzfy-v24';
+const CACHE = 'bizzfy-v25';
 const PUSHLOG = 'bizzfy-pushlog';  // remembers when this phone last received a notification
 const SHELL = ['./', './index.html', './app.js', './i18n.js', './owner.js', './printer.js', './mpesa.js', './icons.js', './config.js', './style.css',
   './manifest.webmanifest', './icon-192.png', './icon-512.png',
   './seal.svg', './fonts/cinzel.woff2', './fonts/montserrat.woff2'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  // cache: 'reload' = always the server's newest copy, never a stale one from the browser's own cache
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))));
   self.skipWaiting();
 });
 
