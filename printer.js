@@ -94,7 +94,7 @@ export function receiptModel(sale, shop) {
   const when = new Date(sale.sold_at).toLocaleString('en-KE', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
   return {
-    shop: shop.business_name || 'Bizzfy POS', phone: shop.receipt_phone || '', footer: shop.receipt_footer || '',
+    shop: shop.business_name || 'Tavia Thrifty', phone: shop.receipt_phone || '', footer: shop.receipt_footer || '',
     when, no: String(sale.id).slice(0, 8).toUpperCase(), seller: sale.seller || '',
     lines: sale.lines, total: sale.total,
     paid: sale.payment_method === 'mpesa' ? `M-Pesa ${sale.mpesa_code || ''}` : 'Cash',
@@ -124,7 +124,7 @@ function escposBytes(m, width) {
   text(pad('Paid', m.paid, width));
   raw(0x1b, 0x61, 0x01);
   if (m.footer) { text(''); text(m.footer); }
-  text('Bizzfy POS');
+  text('Fashion finds second time around');
   raw(0x1b, 0x64, 0x04);                 // feed 4 lines
   raw(0x1d, 0x56, 0x42, 0x00);           // cut (ignored by printers without a cutter)
   return new Uint8Array(out);
@@ -143,7 +143,7 @@ function systemPrint(m, paper) {
       <div class="r-row"><span>&nbsp;&nbsp;@ ${money(l.unit_price)}</span><span>${money(l.quantity * l.unit_price)}</span></div>`).join('')}
     <hr><div class="r-row"><b>TOTAL KES</b><b>${money(m.total)}</b></div>
     <div class="r-row"><span>Paid</span><span>${esc(m.paid)}</span></div>
-    <div class="r-c">${m.footer ? `<p>${esc(m.footer)}</p>` : ''}<small>Bizzfy POS</small></div>`;
+    <div class="r-c">${m.footer ? `<p>${esc(m.footer)}</p>` : ''}<small>Fashion finds second time around</small></div>`;
   window.print();
 }
 

@@ -431,3 +431,4 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
   .top .who { font-size: .8rem; }
   .top .lang { padding: 3px 9px; font-size: .75rem; }
 }
+input[type=checkbox], input[type=radio], progress { accent-color: var(--brand); }

@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
     if (body.test) {
       const { data: mine } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth').eq('user_id', user.id);
       return json(await sendAll(admin, mine ?? [], JSON.stringify({
-        title: 'Bizzfy POS', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })));
+        title: 'Tavia Thrifty', body: 'Notifications are working on this phone. ✓', url: './', tag: 'test' })));
     }
 
     // Low-stock check: any staff phone asks after sales sync; alerts owners once per group per drop.
@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
       ownerSubs(admin),
     ]);
     // deno-lint-ignore no-explicit-any
-    const bizName = (g as any)?.categories?.businesses?.name ?? 'Bizzfy POS';
+    const bizName = (g as any)?.categories?.businesses?.name ?? 'Tavia Thrifty';
 
     const payload = JSON.stringify({
       title: `${bizName}: price approval`,
