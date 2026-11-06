@@ -3,15 +3,19 @@
 //    Works in Chrome on Android. iPhones cannot do this from a web app.
 //  * "system": opens the phone's normal print menu (any printer the phone
 //    supports, including AirPrint, or a printer app such as RawBT on Android).
+//  * On the shop tablet (Tavia Home), receipts go to the printer paired with the tablet,
+//    through window.TaviaHome (Chrome's Bluetooth and print menu don't work inside the tablet app).
 // Settings are kept per phone.
 
 const prefsKey = 'printPrefs';
 export function getPrefs() {
-  try { return { mode: 'system', paper: 58, auto: false, ...JSON.parse(localStorage.getItem(prefsKey) || '{}') }; }
-  catch { return { mode: 'system', paper: 58, auto: false }; }
+  const mode = window.TaviaHome && window.TaviaHome.printBytes ? 'bluetooth' : 'system';   // the shop tablet prints by Bluetooth
+  try { return { mode, paper: 58, auto: false, ...JSON.parse(localStorage.getItem(prefsKey) || '{}') }; }
+  catch { return { mode, paper: 58, auto: false }; }
 }
 export function setPrefs(p) { try { localStorage.setItem(prefsKey, JSON.stringify({ ...getPrefs(), ...p })); } catch {} }
-export const bluetoothSupported = () => !!navigator.bluetooth;
+const tablet = () => (window.TaviaHome && window.TaviaHome.printBytes ? window.TaviaHome : null);
+export const bluetoothSupported = () => !!navigator.bluetooth || !!tablet();
 
 // Common services used by cheap Bluetooth receipt printers.
 const SERVICES = [
@@ -22,10 +26,26 @@ const SERVICES = [
 let device = null;
 let channel = null;
 
-export const printerName = () => device?.name || null;
+export const printerName = () => (tablet() ? tablet().printerName() || null : device?.name || null);
 
 // Must be called from a button tap (the phone shows a list of printers).
 export async function connectPrinter() {
+  const tb = tablet();
+  if (tb) {                                  // the tablet: choose among the printers paired with it
+    const list = JSON.parse(tb.printers() || '[]');
+    if (!list.length) throw new Error('No Bluetooth printer is paired with this tablet yet. Owner menu (hold the seal) → Receipt printer.');
+    let pick = list[0];
+    if (list.length > 1) {
+      const n = Number(prompt(list.map((d, i) => `${i + 1}. ${d.name}`).join('
+') + '
+
+Number of the printer:', '1'));
+      if (!n || !list[n - 1]) throw Object.assign(new Error('cancelled'), { name: 'NotFoundError' });
+      pick = list[n - 1];
+    }
+    tb.setPrinter(pick.address);
+    return pick.name;
+  }
   device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
   return attach();
 }
@@ -41,6 +61,13 @@ async function attach() {
 }
 
 async function sendBytes(bytes) {
+  const tb = tablet();
+  if (tb) {
+    let bin = ''; for (const b of bytes) bin += String.fromCharCode(b);
+    const r = tb.printBytes(btoa(bin));
+    if (r !== 'ok') throw new Error(r);
+    return;
+  }
   if (!device) await connectPrinter();
   if (!device.gatt.connected || !channel) await attach();
   const size = 20; // small pieces work on every printer
@@ -123,7 +150,7 @@ function systemPrint(m, paper) {
 export async function printReceipt(sale, shop) {
   const prefs = getPrefs();
   const m = receiptModel(sale, shop);
-  if (prefs.mode === 'bluetooth' && bluetoothSupported()) {
+  if (tablet() || (prefs.mode === 'bluetooth' && bluetoothSupported())) {
     await sendBytes(escposBytes(m, prefs.paper >= 80 ? 48 : 32));
   } else {
     systemPrint(m, prefs.paper);
