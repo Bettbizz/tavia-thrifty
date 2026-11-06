@@ -332,3 +332,102 @@ main:has(.cartbar) { padding-bottom: 96px; }
 .tillrow .tr { text-align: right; }
 .tillrow.bad .tr { color: var(--warn); font-weight: 600; }
 .tillrow.ok .tr { color: var(--muted); }
+
+/* =====================================================================
+   Tavia Thrifty theme: deep teal and gold, Cinzel + Montserrat, the seal.
+   (Overrides the colours above; the layout is unchanged. Receipts still print black on white.)
+   ===================================================================== */
+@font-face { font-family: 'Cinzel'; src: url('fonts/cinzel.woff2') format('woff2'); font-weight: 400 900; font-display: swap; }
+@font-face { font-family: 'Montserrat'; src: url('fonts/montserrat.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+:root {
+  --bg: #062F2D; --card: #0A3D3A; --ink: #F4EDE1; --muted: #8DB5AF; --line: #1B5A55;
+  --brand: #C9A25E; --brand-soft: rgba(201,162,94,.14); --brand-ink: #062F2D;
+  --gold: linear-gradient(135deg, #F3E2B8, #C9A25E 55%, #B08840); --gold-light: #F3E2B8; --tag: #D9BF86;
+  --ok: #7FC8A0; --warn: #E9B872; --bad: #E88A70;
+  --c0: #0E4A46; --c1: #0C4542; --c2: #11504B; --c3: #0F4744; --c4: #0D4E4A; --c5: #124C48;
+  color-scheme: dark;
+}
+html, body { background: radial-gradient(120% 80% at 50% 0%, #0B4441 0%, #062F2D 45%, #041F1E 100%) fixed; color: var(--ink);
+  font-family: 'Montserrat', system-ui, sans-serif; font-weight: 500; }
+h1, h2, .brand, .tile, .total b, .stats .big b, .tick { font-family: 'Cinzel', serif; }
+h1 { font-weight: 600; letter-spacing: .3px; } h2 { font-weight: 600; color: var(--tag); }
+input, select, textarea { font-family: 'Montserrat', system-ui, sans-serif; }
+
+/* header: seal + name in gold on the darkest teal */
+.top { background: rgba(4,31,30,.92); color: var(--ink); border-bottom: 1px solid rgba(201,162,94,.45); backdrop-filter: blur(6px); }
+.top .brand, .bizswitch { color: var(--gold-light); letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600; }
+.top .brand::before, .bizswitch::before { content: ''; display: inline-block; width: 26px; height: 26px; margin-right: 8px; vertical-align: -7px;
+  background: url('seal.svg') center / contain no-repeat; }
+.badge { background: var(--brand-soft); color: var(--gold-light); border: 1px solid rgba(201,162,94,.5); }
+.lang { color: var(--gold-light); border-color: rgba(201,162,94,.6); }
+
+/* login: the seal, the name, the tagline */
+.login { text-align: center; }
+.login form { text-align: left; }
+.loginseal { width: 150px; height: 150px; margin: 40px auto 8px; background: url('seal.svg') center / contain no-repeat; }
+.brand.big { color: var(--gold-light); font-size: 2rem; letter-spacing: 4px; margin: 6px 0 4px; font-weight: 600; }
+.tagline { color: var(--tag); font-size: .72rem; letter-spacing: 3.5px; text-transform: uppercase; margin: 0 0 22px; }
+.product { margin: -10px 0 22px; }
+.login .lang { color: var(--gold-light); }
+.login input, .form input:not([type=checkbox]), .form select, .price input, .mpesa input, .mpbox textarea, .chipdate {
+  background: rgba(4,31,30,.6); color: var(--ink); border-color: var(--line); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--brand) !important; box-shadow: 0 0 0 3px rgba(201,162,94,.18); }
+::placeholder { color: rgba(141,181,175,.7); }
+
+/* buttons: gold */
+.primary { background: var(--gold); color: var(--brand-ink); letter-spacing: .3px; box-shadow: 0 6px 18px -8px rgba(201,162,94,.7); }
+.primary:disabled { background: #1B4B47; color: var(--muted); box-shadow: none; }
+.askbtn { background: linear-gradient(135deg, #F2CF8E, #E9B872); color: var(--brand-ink); }
+.btn.ok { background: #2E7D5B; } .btn.bad { background: #A8473A; }
+.btn.plain { background: var(--card); }
+.link { color: var(--gold-light); }
+
+/* item tiles and grades: teal cards with a gold edge */
+.tile { color: var(--ink); border: 1.5px solid rgba(201,162,94,.35); box-shadow: 0 8px 20px -14px rgba(0,0,0,.6); font-weight: 600; }
+.addtile { border-color: rgba(201,162,94,.4); }
+.grade, .line, .card, .sale, .stats > div, .receipt, .mpbox, .tbl, .paytoggle button, .chip, .editbtn, .mover button { border-color: var(--line); }
+.grade em { background: var(--brand); color: var(--brand-ink); }
+.paytoggle .on, .chip.on { background: var(--brand-soft); border-color: var(--brand); color: var(--gold-light); }
+
+/* cart bar, totals, done */
+.cartbar { background: var(--gold); color: var(--brand-ink); box-shadow: 0 10px 26px -10px rgba(0,0,0,.6); }
+.stats .big { background: var(--gold); color: var(--brand-ink); border-color: transparent; }
+.stats .big small { color: rgba(6,47,45,.75); }
+.tick { background: var(--gold); color: var(--brand-ink); }
+.receipt { background: rgba(4,31,30,.45); border-color: rgba(201,162,94,.4); }
+
+/* bottom tabs */
+.tabs { background: rgba(4,31,30,.96); border-top: 1px solid rgba(201,162,94,.4); backdrop-filter: blur(6px); }
+.tabs .on { color: var(--gold-light); }
+
+/* messages */
+.banner.off, .banner.lowb, .status.bad { background: rgba(232,138,112,.14); color: var(--bad); }
+.banner.wait, .warn { background: rgba(233,184,114,.13); color: var(--warn); }
+.banner.ask, .note, .status.on { background: rgba(127,200,160,.13); color: var(--ok); }
+.status.off { background: rgba(141,181,175,.12); }
+.toast { background: var(--gold); color: var(--brand-ink); box-shadow: 0 8px 24px -8px rgba(0,0,0,.6); }
+.toast.bad { background: var(--bad); color: #2A0F08; }
+.count { color: #2A0F08; }
+
+/* small leftovers that were white */
+.mpchoice, .iconpick button, .iconbtn { background: var(--card); color: var(--ink); }
+.mpchoice.on { background: var(--brand-soft); border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand) inset; }
+.iconpick button.on { background: var(--brand-soft); }
+.totalcard, .biztag { background: var(--brand-soft); }
+.biztag, .bizhead { color: var(--gold-light); }
+.mbar { background: #0E4441; }
+.mbar.none { background: #0C3F3C; }
+.ripple { color: #F3E2B8; }
+.cartpanel, .cartfoot { background: var(--card); }
+.cartfoot { box-shadow: 0 -10px 14px -10px rgba(0,0,0,.5); }
+.editbtn.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.top .brand, .bizswitch { letter-spacing: .6px; font-size: .95rem; }
+@media (min-width: 520px) { .top .brand, .bizswitch { letter-spacing: 1.5px; font-size: 1.05rem; } }
+.top .brand { flex: none; } .top .who { min-width: 0; }
+@media (max-width: 440px) {
+  .top { gap: 8px; padding: 10px 12px; }
+  .top .brand { font-size: .86rem; letter-spacing: .3px; }
+  .top .brand::before { width: 22px; height: 22px; margin-right: 6px; vertical-align: -6px; }
+  .top .who { font-size: .8rem; }
+  .top .lang { padding: 3px 9px; font-size: .75rem; }
+}

@@ -76,7 +76,7 @@ const shopFor = (bizId) => {
   const b = bizById(bizId) || curBiz();
   return b ? { business_name: b.name, receipt_phone: b.receipt_phone, receipt_footer: b.receipt_footer } : S.settings;
 };
-const shopName = () => curBiz()?.name || S.settings.business_name || 'Bizzfy POS';
+const shopName = () => curBiz()?.name || S.settings.business_name || 'Tavia Thrifty';
 
 function activePromo(gradeId, at = new Date()) {
   return S.catalog.promotions
@@ -499,9 +499,11 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login">
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
-      <div class="brand big">${esc(S.businesses.length > 1 ? 'Bizzfy POS' : shopName())}</div>
+      <div class="loginseal" role="img" aria-label="Tavia Thrifty"></div>
+      <div class="brand big">TAVIA THRIFTY</div>
+      <p class="tagline">Fashion finds second time around</p>
       ${S.businesses.length > 1 ? `<p class="product">${S.businesses.map((b) => esc(b.name)).join(' · ')}</p>`
-        : S.settings.business_name ? '<p class="product">Bizzfy POS</p>' : ''}
+        : ''}
       ${S.notice ? `<p class="note">${esc(S.notice)}</p>` : ''}
       ${S.signup ? `<form id="signup">
         <label>${t('yourName')}<input name="name" autocomplete="name" required></label>
