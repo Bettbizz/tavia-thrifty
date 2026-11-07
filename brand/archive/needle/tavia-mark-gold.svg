@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
+  <defs>
+  <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#F3E2B8"/><stop offset=".45" stop-color="#D2AE6A"/>
+    <stop offset=".75" stop-color="#B08840"/><stop offset="1" stop-color="#E6CC92"/>
+  </linearGradient></defs>
+  
+  
+  <defs>
+    <mask id="mg-ring" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000">
+      <rect width="1000" height="1000" fill="#fff"/>
+      <!-- back half of the thread goes behind the needle -->
+      <clipPath id="mg-top"><rect x="0" y="0" width="1000" height="318"/></clipPath>
+      <g clip-path="url(#mg-top)"><path d="M462,262 C462,214 538,214 538,262 L538,330 C538,520 520,700 500,880 C480,700 462,520 462,330 Z" fill="#000" stroke="#000" stroke-width="28" stroke-linejoin="round" transform="rotate(7 500 318)"/></g>
+    </mask>
+    <mask id="mg-needle" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000">
+      <rect width="1000" height="1000" fill="#fff"/>
+      <path d="M491,262 C491,250 509,250 509,262 L509,372 C509,384 491,384 491,372 Z" fill="#000"/>
+      <!-- front half of the thread passes over the needle -->
+      <g transform="rotate(-7 500 318)"><path d="M200,318 a300,66 0 1,0 600,0 a300,66 0 1,0 -600,0 Z
+          M224,308 a276,40 0 1,1 552,0 a276,40 0 1,1 -552,0 Z" fill="#000" stroke="#000" stroke-width="28" fill-rule="evenodd" clip-path="url(#mg-bot)"/></g>
+      <clipPath id="mg-bot"><rect x="0" y="316" width="1000" height="1000"/></clipPath>
+    </mask>
+  </defs>
+  <g transform="rotate(-7 500 318)"><path d="M200,318 a300,66 0 1,0 600,0 a300,66 0 1,0 -600,0 Z
+          M224,308 a276,40 0 1,1 552,0 a276,40 0 1,1 -552,0 Z" fill-rule="evenodd" fill="url(#gold)" mask="url(#mg-ring)"/></g>
+  <path d="M462,262 C462,214 538,214 538,262 L538,330 C538,520 520,700 500,880 C480,700 462,520 462,330 Z" fill="url(#gold)" mask="url(#mg-needle)"/>
+</svg>

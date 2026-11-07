@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
+<defs><linearGradient id="gold" gradientUnits="userSpaceOnUse" x1="140" y1="100" x2="860" y2="900">
+  <stop offset="0" stop-color="#F3E2B8"/><stop offset=".42" stop-color="#D2AE6A"/>
+  <stop offset=".72" stop-color="#B08840"/><stop offset="1" stop-color="#E6CC92"/></linearGradient></defs>
+  <mask id="mk-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000">
+    <rect width="1000" height="1000" fill="#fff"/>
+    <path d="M500,500 L-65.1,199.5 L219.4,-75.2 Z" fill="#000"/>
+  </mask>
+  <g mask="url(#mk-gap)">
+    <path d="M100,500 a400,400 0 1,0 800,0 a400,400 0 1,0 -800,0 Z
+              M128,490 a372,372 0 1,1 744,0 a372,372 0 1,1 -744,0 Z" fill-rule="evenodd" fill="#13241F"/>
+    <circle cx="500" cy="494" r="338" fill="none" stroke="#A9853F" stroke-width="4.5" stroke-dasharray="17 11" stroke-linecap="round" opacity=".7"/>
+  </g>
+  <path d="M231.9,200.3 l22,22 l-22,22 l-22,-22 Z" fill="#13241F"/>
+  <path d="M250,260 H750 V352 Q744,326 712,322 H536 L540,738 Q542,756 590,760 H600 V782 H400 V760 H410
+           Q458,756 460,738 L464,322 H288 Q256,326 250,352 Z" fill="#13241F" transform="translate(500,494) scale(.76) translate(-500,-521)"/>
+</svg>
