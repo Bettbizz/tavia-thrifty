@@ -1,8 +1,8 @@
 {
- "versionCode": 22,
- "versionName": "1.0.22",
- "url": "https://github.com/Bettbizz/tavia-thrifty/releases/download/tavia-home-22/tavia-home.apk",
- "sha256": "6d90555582aab1e62c4bdc3920e5892413d1b2c855a594136d93ceb75f7a88da",
- "notes": "Self-updates, battery warnings at 25% and every 5%, unplug at 100%",
- "published": "2026-11-07 10:28"
+ "versionCode": 23,
+ "versionName": "1.0.23",
+ "url": "https://github.com/Bettbizz/tavia-thrifty/releases/download/tavia-home-23/tavia-home.apk",
+ "sha256": "0ae32ad52d7ed9c42afda11284f25e57e88d67e1308f49b9d357eac1dc3fb721",
+ "notes": "Test update over the internet",
+ "published": "2026-11-07 10:33"
 }
