@@ -564,9 +564,34 @@ function renderSellItems() {
       `<div class="tilewrap"><button class="tile c${n++ % 6}" data-a="cat" data-v="${c.id}">${c.icon ? `<span class="ticon">${esc(c.icon)}</span>` : ''}<span>${esc(c.name)}</span></button>
       ${edit ? `<div class="mover">
         <button data-a="move-cat" data-v="${c.id}:-1" ${i === 0 ? 'disabled' : ''} aria-label="${t('moveEarlier')}">◀</button>
-        <button data-a="move-cat" data-v="${c.id}:1" ${i === cats.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▶</button></div>` : ''}</div>`).join('')}
-      ${edit ? `<button class="tile addtile" data-a="new-group" data-v="${b.id || ''}"><span class="ticon">＋</span><span>${t('addItem')}</span></button>` : ''}</div>`).join('')
+        <button data-a="move-cat" data-v="${c.id}:1" ${i === cats.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▶</button></div>
+      <div class="mover">
+        <button data-a="cat-rename" data-v="${c.id}" aria-label="${t('rename')}">✎ ${t('rename')}</button>
+        <button data-a="cat-remove" data-v="${c.id}" class="danger" aria-label="${t('remove')}">🗑</button></div>` : ''}</div>`).join('')}
+      ${edit ? `<button class="tile addtile" data-a="new-group" data-v="${b.id || ''}"><span class="ticon">＋</span><span>${t('addItem')}</span></button>` : ''}</div>
+      ${edit ? removedList(b.id) : ''}`).join('')
     + cartBar();
+}
+
+// ---------- owner: rename, remove and restore items (removing only hides them: sales history stays) ----------
+async function loadRemoved() {
+  if (!isOwner() || !online()) return;
+  const { data } = await sb.from('categories').select('id, name, icon, business_id').eq('active', false).order('name');
+  S.removedCats = data || [];
+}
+function removedList(bizId) {
+  const list = (S.removedCats || []).filter((c) => !bizId || c.business_id === bizId);
+  if (!list.length) return '';
+  return `<p class="small muted removedhead">${t('removedItems')}</p><div class="chips">${list.map((c) =>
+    `<button class="chip" data-a="cat-restore" data-v="${c.id}">↺ ${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</button>`).join('')}</div>`;
+}
+async function saveItem(table, id, change, okMsg) {
+  const { error } = await sb.from(table).update(change).eq('id', id);
+  if (error) { toast(error.message, true); return; }
+  await Promise.all([loadCatalog(), loadRemoved()]);
+  owner.loadStock();
+  toast(okMsg || t('saved'));
+  render();
 }
 
 // ---------- owner: add a new item group straight from the Sell screen ----------
@@ -663,7 +688,10 @@ function renderGrades() {
         <b>${pi.promo ? `<s>${kes(g.normal_price)}</s> <em>${t('promo')}</em> ` : ''}${kes(pi.price)}</b></button>
         ${edit ? `<div class="mover vert">
           <button data-a="move-grade" data-v="${g.id}:-1" ${i === 0 ? 'disabled' : ''} aria-label="${t('moveEarlier')}">▲</button>
-          <button data-a="move-grade" data-v="${g.id}:1" ${i === gs.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▼</button></div>` : ''}</div>`;
+          <button data-a="move-grade" data-v="${g.id}:1" ${i === gs.length - 1 ? 'disabled' : ''} aria-label="${t('moveLater')}">▼</button></div>
+        <div class="mover vert">
+          <button data-a="grade-rename" data-v="${g.id}" aria-label="${t('rename')}">✎</button>
+          <button data-a="grade-remove" data-v="${g.id}" class="danger" aria-label="${t('remove')}">🗑</button></div>` : ''}</div>`;
     }).join('')}</div>
     ${edit ? `<form class="form card" id="newgrade" data-save="1">
       <h2>${t('addGrade')}</h2>
@@ -979,8 +1007,33 @@ app.addEventListener('click', async (e) => {
     case 'today-biz': S.todayBiz = v || null; render(); break;
     case 'sell-edit':
       if (!online()) { toast(t('needsInternet'), true); break; }
-      S.editSell = !S.editSell; S.screen = 'categories'; render(); break;
+      S.editSell = !S.editSell; S.screen = 'categories'; render();
+      if (S.editSell) { await loadRemoved(); render(); }
+      break;
     case 'new-group': S.ng = newGroupDraft(v || S.biz); S.screen = 'newgroup'; render(); break;
+    case 'cat-rename': {
+      const c = category(v); if (!c) break;
+      const n = prompt(t('renamePrompt'), c.name);
+      if (n && n.trim() && n.trim() !== c.name) await saveItem('categories', v, { name: n.trim() });
+      break;
+    }
+    case 'cat-remove': {
+      const c = category(v); if (!c) break;
+      if (confirm(t('removeItemConfirm').replace('{name}', c.name))) await saveItem('categories', v, { active: false }, t('removedOk'));
+      break;
+    }
+    case 'cat-restore': await saveItem('categories', v, { active: true }, t('restoredOk')); break;
+    case 'grade-rename': {
+      const g = grade(v); if (!g) break;
+      const n = prompt(t('renamePrompt'), g.name);
+      if (n && n.trim() && n.trim() !== g.name) await saveItem('grades', v, { name: n.trim() });
+      break;
+    }
+    case 'grade-remove': {
+      const g = grade(v); if (!g) break;
+      if (confirm(t('removeGradeConfirm').replace('{name}', gradeLabel(g)))) await saveItem('grades', v, { active: false }, t('removedOk'));
+      break;
+    }
     case 'ng-cancel': S.ng = null; S.screen = 'categories'; render(); break;
     case 'ng-icon': S.ng.icon = v; S.ng.picked = true; render(); break;
     case 'ng-addgrade': S.ng.grades.push({ name: '', normal: '', lowest: '' }); render(); break;

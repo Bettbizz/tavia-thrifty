@@ -432,3 +432,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
   .top .lang { padding: 3px 9px; font-size: .75rem; }
 }
 input[type=checkbox], input[type=radio], progress { accent-color: var(--brand); }
+
+/* Sell edit mode: rename / remove under each tile and price row */
+.mover button.danger { color: var(--bad); }
+.removedhead { margin: 10px 0 6px; }
