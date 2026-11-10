@@ -279,7 +279,7 @@ function render() {
   const body = { requests: requestsView, jobs: jobsView, calendar: calendarView, settings: settingsView }[S.tab]();
   root.innerHTML = `<header class="top"><div class="brand"><span class="logo">🚜</span><div><b>${esc(S.settings?.business_name || 'Tractor Hire')}</b><small>Owner</small></div></div>
     <button class="chip" data-act="reload" aria-label="refresh">↻</button></header>
-    ${DEMO ? '<div class="demo">DEMO MODE — data is only on this device. Open the client app in another tab to send test requests.</div>' : ''}
+    ${DEMO ? '<div class="demo">DEMO MODE — data is only on this device. Send test requests from the farmer app on this same device.</div>' : ''}
     <nav class="tabs four">${tabs.map(([k, l, c]) => `<button class="${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}${c ? ` <span class="badge">${c}</span>` : ''}</button>`).join('')}</nav>
     <main>${body}</main>${modalView()}`;
 }
@@ -317,7 +317,10 @@ root.addEventListener('click', async (e) => {
     case 'reload': await loadAll(); render(); toast('Up to date'); break;
     case 'notify': await Notification.requestPermission(); render(); break;
     case 'logout': await api.signOut(); S.authed = false; render(); break;
-    case 'resetdemo': if (confirm('Delete all demo bookings and settings?')) { localStorage.removeItem('tractor.demo'); location.reload(); } break;
+    case 'resetdemo':
+      if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to delete all demo data'; break; }
+      try { localStorage.removeItem('tractor.demo'); } catch { /* blocked */ }
+      location.reload(); break;
   }
 });
 

@@ -20,7 +20,7 @@ const W = {
     sentTitle: 'Request sent', sentBody: 'You will see here when it is approved. Your booking number is',
     whatsappOwner: 'Tell the owner on WhatsApp', callOwner: 'Call the owner',
     noBookings: 'No bookings yet. Pick a day on the Book tab.', refresh: 'Refresh',
-    cancelReq: 'Cancel this request', cancelAsk: 'Cancel this request?',
+    cancelReq: 'Cancel this request', cancelAsk: 'Tap again to cancel it',
     othersWaiting: (n) => n === 1 ? '1 other request is waiting for this time' : `${n} other requests are waiting for this time`,
     eveningNote: 'Evening work is only on some days.',
     offline: 'No internet. Connect and try again.',
@@ -47,7 +47,7 @@ const W = {
     sentTitle: 'Ombi limetumwa', sentBody: 'Utaona hapa likikubaliwa. Nambari ya ombi lako ni',
     whatsappOwner: 'Mjulishe mwenye trekta kwa WhatsApp', callOwner: 'Mpigie mwenye trekta',
     noBookings: 'Bado hakuna. Chagua siku kwenye "Weka nafasi".', refresh: 'Onyesha upya',
-    cancelReq: 'Ghairi ombi hili', cancelAsk: 'Ghairi ombi hili?',
+    cancelReq: 'Ghairi ombi hili', cancelAsk: 'Gusa tena kughairi',
     othersWaiting: (n) => `Maombi ${n} mengine yanasubiri wakati huu`,
     eveningNote: 'Kazi ya jioni ni siku chache tu.',
     offline: 'Hakuna mtandao. Unganisha kisha ujaribu tena.',
@@ -142,5 +142,5 @@ export function toast(msg, bad = false) {
 }
 
 export function registerSW() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  try { navigator.serviceWorker?.register('./sw.js').catch(() => {}); } catch { /* not allowed here */ }
 }

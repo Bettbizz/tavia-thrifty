@@ -223,7 +223,8 @@ root.addEventListener('click', async (e) => {
   }
   if (el.dataset.slot) { S.slot = el.dataset.slot; S.view = 'form'; S.error = ''; render(); window.scrollTo(0, 0); return; }
   if (el.dataset.cancel) {
-    if (!confirm(t('cancelAsk'))) return;
+    // two taps instead of a pop-up question (pop-ups are blocked in some places)
+    if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = t('cancelAsk'); return; }
     try { await api.cancelRequest(S.me.phone, el.dataset.cancel); await loadMine(); render(); }
     catch (err) { toast(errText(err), true); }
   }
