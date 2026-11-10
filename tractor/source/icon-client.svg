@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#2F5D1E"/>
+  <!-- field rows -->
+  <path d="M0 400 Q256 360 512 400 V512 H0Z" fill="#6B4A2B"/>
+  <path d="M0 430 Q256 395 512 430" stroke="#8A6440" stroke-width="8" fill="none"/>
+  <path d="M0 462 Q256 430 512 462" stroke="#8A6440" stroke-width="8" fill="none"/>
+  <g transform="translate(70 120)">
+    <!-- cab -->
+    <rect x="150" y="20" width="130" height="130" rx="14" fill="#E0A526"/>
+    <rect x="170" y="40" width="90" height="70" rx="8" fill="#BFE3F2"/>
+    <!-- body / hood -->
+    <rect x="40" y="120" width="300" height="90" rx="16" fill="#E0A526"/>
+    <rect x="20" y="140" width="40" height="50" rx="8" fill="#C98F14"/>
+    <!-- exhaust -->
+    <rect x="80" y="60" width="16" height="66" rx="6" fill="#3A3A34"/>
+    <!-- wheels -->
+    <circle cx="270" cy="230" r="80" fill="#2B2B27"/><circle cx="270" cy="230" r="38" fill="#E0A526"/><circle cx="270" cy="230" r="12" fill="#2B2B27"/>
+    <circle cx="80" cy="250" r="50" fill="#2B2B27"/><circle cx="80" cy="250" r="22" fill="#E0A526"/><circle cx="80" cy="250" r="8" fill="#2B2B27"/>
+  </g>
+  
+</svg>
