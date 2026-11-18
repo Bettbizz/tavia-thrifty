@@ -146,12 +146,16 @@ export function createOwner(ctx) {
           O.report = data; break;
         }
         case 'bales': {
-          const [b, s] = await Promise.all([
+          let rq = sb.from('bales').select('id, received_on, supplier, cost, notes, bale_stock(id, grade_id, quantity, remaining)');
+          if (S.biz) rq = rq.eq('business_id', S.biz);
+          const [b, s, raw] = await Promise.all([
             sb.rpc('bale_report', { p_business: S.biz }),
             sb.from('bale_stock').select('grade_id, remaining').gt('remaining', 0),
+            rq,
           ]);
           if (b.error) throw b.error;
           O.bales = b.data; O.stock = s.data || [];
+          O.baleRows = Object.fromEntries((raw.data || []).map((x) => [x.id, x]));   // for ✏️ Edit on each bale
           await loadStock(); break;
         }
         case 'prices': {
@@ -324,12 +328,15 @@ export function createOwner(ctx) {
       ${stockRows.length ? `<h2>${t('inStock')}</h2>${table([t('items'), t('pieces')], stockRows)}` : ''}
       <h2>${pieces() ? t('deliveries') : t('bales')}</h2>
       ${O.bales.length ? O.bales.map((b) => {
+        const raw = (O.baleRows || {})[b.id];
+        if (O.editBale === b.id && raw) return editBaleForm(raw);
         const bal = b.sold_value - b.cost;
         return `<div class="card">
           <div class="srow"><b>${fmtDay(b.received_on)}${b.supplier ? ` · ${esc(b.supplier)}` : ''}</b><b>${kes(b.cost)}</b></div>
           <div class="small">${b.left} / ${b.pieces} ${t('left')} · ${t('soldSoFar')}: ${kes(b.sold_value)}</div>
           <div class="small">${t('balance')}: ${money(bal, true)}${bal >= 0 ? ` ✓ ${t('paidOff')}` : ''}</div>
           <div class="small muted">${(b.lines || []).map((l) => `${esc(l.item)}: ${l.left}/${l.quantity}`).join(' · ')}</div>
+          ${raw ? `<button class="btn plain okc" data-a="o-bedit" data-v="${b.id}">✏️ ${t('edit')}</button>` : ''}
         </div>`;
       }).join('') : `<p class="center">${pieces() ? t('noDeliveries') : t('noBales')}</p>`}`;
   }
@@ -427,6 +434,24 @@ export function createOwner(ctx) {
         <button class="btn ok small" data-a="o-undo" data-v="${r.id}">${t('undo')}</button></div>`).join('')}</div>`;
   }
 
+  // The edit form for one bale / delivery: date, supplier, cost, pieces per item (not below what's sold), notes.
+  function editBaleForm(b) {
+    const qty = Object.fromEntries((b.bale_stock || []).map((l) => [l.grade_id, l]));
+    return `<div class="card"><form class="form" data-form="editbale" data-id="${b.id}">
+      <label>${t('date')}<input type="date" name="date" value="${b.received_on}" required></label>
+      <label>${t('supplier')}<input name="supplier" value="${esc(b.supplier || '')}" autocomplete="off"></label>
+      <label>${pieces() ? t('stockCost') : t('baleCost')}<input name="cost" type="number" inputmode="numeric" min="0" value="${b.cost}" required></label>
+      ${activeGroups().map(({ c, gs }) => `<fieldset><legend>${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</legend>${gs.map((g) => {
+        const l = qty[g.id]; const s = l ? l.quantity - l.remaining : 0;
+        return `<label class="qrow"><span>${esc(g.name)}${s ? ` <small class="muted">(${s} ${t('soldWord')})</small>` : ''}</span>
+          <input type="number" inputmode="numeric" min="${s}" name="q_${g.id}" value="${l ? l.quantity : ''}"></label>`;
+      }).join('')}</fieldset>`).join('')}
+      <label>${t('notes')}<input name="notes" value="${esc(b.notes || '')}" autocomplete="off"></label>
+      <button class="primary">${t('save')}</button>
+      <button type="button" class="link" data-a="o-bcancel">${t('cancel')}</button>
+    </form></div>`;
+  }
+
   // Edit or delete single bales / deliveries (hidden under Settings → Advanced).
   function viewBalesAdmin() {
     const title = pieces() ? 'manageStock' : 'manageBales';
@@ -441,22 +466,7 @@ export function createOwner(ctx) {
       const sold = lines.reduce((x, l) => x + l.quantity - l.remaining, 0);
       const head = `<div class="srow"><b>${fmtDay(b.received_on)}${b.supplier ? ' · ' + esc(b.supplier) : ''}</b><b>${kes(b.cost)}</b></div>
         <div class="small muted">${pcs} ${t('pieces').toLowerCase()} · ${sold} ${t('soldWord')}${b.notes ? ' · ' + esc(b.notes) : ''}</div>`;
-      if (O.editBale === b.id) {
-        const qty = Object.fromEntries(lines.map((l) => [l.grade_id, l]));
-        return `<div class="card"><form class="form" data-form="editbale" data-id="${b.id}">
-          <label>${t('date')}<input type="date" name="date" value="${b.received_on}" required></label>
-          <label>${t('supplier')}<input name="supplier" value="${esc(b.supplier || '')}" autocomplete="off"></label>
-          <label>${pieces() ? t('stockCost') : t('baleCost')}<input name="cost" type="number" inputmode="numeric" min="0" value="${b.cost}" required></label>
-          ${activeGroups().map(({ c, gs }) => `<fieldset><legend>${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.name)}</legend>${gs.map((g) => {
-            const l = qty[g.id]; const s = l ? l.quantity - l.remaining : 0;
-            return `<label class="qrow"><span>${esc(g.name)}${s ? ` <small class="muted">(${s} ${t('soldWord')})</small>` : ''}</span>
-              <input type="number" inputmode="numeric" min="${s}" name="q_${g.id}" value="${l ? l.quantity : ''}"></label>`;
-          }).join('')}</fieldset>`).join('')}
-          <label>${t('notes')}<input name="notes" value="${esc(b.notes || '')}" autocomplete="off"></label>
-          <button class="primary">${t('save')}</button>
-          <button type="button" class="link" data-a="o-bcancel">${t('cancel')}</button>
-        </form></div>`;
-      }
+      if (O.editBale === b.id) return editBaleForm(b);
       if (O.delBale === b.id) {
         return `<div class="card dangercard">${head}
           <p><b>${t('deleteBaleWill')}</b></p>

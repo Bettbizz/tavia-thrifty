@@ -209,9 +209,16 @@ async function pullTablet() {
           paid_at: m.paid_at || new Date(it.at || Date.now()).toISOString() });
       }
       if (!online()) continue;
-      const { error } = await sb.rpc('record_till_payment', { p_code: m.code, p_amount: m.amount, p_sender: m.name,
-        p_phone: m.phone, p_paid_at: m.paid_at, p_raw: it.body });
-      if (!error || !isNetErr(error)) tb.ack(String(it.id));
+      const args = { p_code: m.code, p_amount: m.amount, p_sender: m.name, p_phone: m.phone, p_paid_at: m.paid_at, p_raw: it.body };
+      let { error } = await sb.rpc('record_till_payment', args);
+      // A login that went stale while the POS sat in the background: refresh it and try once more.
+      if (error && !isNetErr(error)) {
+        try { await sb.auth.refreshSession(); } catch { /* try again next time */ }
+        ({ error } = await sb.rpc('record_till_payment', args));
+      }
+      // Only let the tablet forget a payment once the database has it (or the code can never be saved).
+      // Any other error keeps it waiting, so it is sent again on the next pull instead of being lost.
+      if (!error || /Bad M-Pesa code/i.test(error.message || '')) tb.ack(String(it.id));
     }
     store.set('till', S.till);
   } finally { pulling = false; }
