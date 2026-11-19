@@ -1,8 +1,8 @@
 {
- "versionCode": 23,
- "versionName": "1.0.23",
- "url": "https://github.com/Bettbizz/tavia-thrifty/releases/download/tavia-home-23/tavia-home.apk",
- "sha256": "0ae32ad52d7ed9c42afda11284f25e57e88d67e1308f49b9d357eac1dc3fb721",
- "notes": "Test update over the internet",
- "published": "2026-11-07 10:33"
+ "versionCode": 25,
+ "versionName": "1.0.25",
+ "url": "https://github.com/Bettbizz/tavia-thrifty/releases/download/tavia-home-25/tavia-home.apk",
+ "sha256": "194a1002cc909777cf568619bde804aae218c06f96be22903fca93faf69a28c3",
+ "notes": "Screen rail (brightness, sound, rotate, screen off); resend till payments to the POS",
+ "published": "2026-11-19 04:38"
 }
