@@ -436,3 +436,14 @@ input[type=checkbox], input[type=radio], progress { accent-color: var(--brand); 
 /* Sell edit mode: rename / remove under each tile and price row */
 .mover button.danger { color: var(--bad); }
 .removedhead { margin: 10px 0 6px; }
+
+/* which business is selected: a pill in the header and a bar on owner pages, gold for clothes, rose for jewellery */
+.top .bizswitch { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; max-width: 60%; padding: 5px 12px; border-radius: 999px;
+  border: 1.5px solid currentColor; background: rgba(201,162,94,.14); line-height: 1.2; }
+.top .bizswitch::before { display: none; }
+.top .bizswitch.kpieces, .bizbar.kpieces { color: #F2B8C6; background: rgba(242,184,198,.16); }
+.bizbar { display: block; width: 100%; text-align: left; color: var(--gold-light); background: rgba(201,162,94,.14);
+  border-bottom: 1px solid currentColor; }
+.bizbar b { text-transform: uppercase; letter-spacing: .5px; }
+.bizbar span { float: right; font-weight: 500; opacity: .85; font-size: .82rem; }
+

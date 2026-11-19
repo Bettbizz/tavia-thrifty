@@ -77,6 +77,8 @@ const shopFor = (bizId) => {
   return b ? { business_name: b.name, receipt_phone: b.receipt_phone, receipt_footer: b.receipt_footer } : S.settings;
 };
 const shopName = () => curBiz()?.name || S.settings.business_name || 'Tavia Thrifty';
+const bizKind = () => (curBiz()?.kind === 'pieces' ? 'kpieces' : 'kbales');
+const bizIcon = () => (curBiz()?.kind === 'pieces' ? '💍' : '👗');
 
 function activePromo(gradeId, at = new Date()) {
   return S.catalog.promotions
@@ -484,16 +486,19 @@ function shell(body) {
     ? `<button class="banner lowb" data-a="till">⚠ ${t('tillBanner').replace('{n}', tp)}</button>` : '';
   const askBanner = asks && !(S.tab === 'owner' && S.o.section === 'approvals')
     ? `<button class="banner ask" data-a="o-approvals">🔔 ${asks} ${t('approvalsWaiting')}</button>` : '';
+  // Owner pages show one business at a time: say which, in that business's colour (tap to switch).
+  const bizBar = S.businesses.length > 1 && isOwner() && S.tab === 'owner'
+    ? `<button class="banner bizbar ${bizKind()}" data-a="biz">${bizIcon()} ${t('showingBiz').replace('{name}', `<b>${esc(shopName())}</b>`)} <span>⇄ ${t('tapSwitch')}</span></button>` : '';
   return `
     <header class="top">
       ${S.businesses.length > 1 && isOwner()
-        ? `<button class="brand bizswitch" data-a="biz">${esc(shopName())} <span>⇄</span></button>`
+        ? `<button class="bizswitch ${bizKind()}" data-a="biz" aria-label="${esc(t('tapSwitch'))}">${bizIcon()} ${esc(shopName())} <span>⇄</span></button>`
         : S.businesses.length > 1 ? `<div class="brand">${S.businesses.map((b) => esc(b.name)).join(' & ')}</div>`
         : `<div class="brand">${esc(shopName())}</div>`}
       <div class="who">${esc(me()?.full_name)}${isOwner() ? ` <span class="badge">${t('owner')}</span>` : ''}</div>
       <button class="lang" data-a="lang">${getLang() === 'en' ? 'Kiswahili' : 'English'}</button>
     </header>
-    ${askBanner}${tillBanner}${lowBanner}${banner}
+    ${bizBar}${askBanner}${tillBanner}${lowBanner}${banner}
     <main>${body}</main>
     <nav class="tabs ${isOwner() ? 'three' : ''}">
       <button data-a="tab" data-v="sell" class="${S.tab === 'sell' ? 'on' : ''}"><span class="ic">🛍️</span>${t('sell')}</button>
